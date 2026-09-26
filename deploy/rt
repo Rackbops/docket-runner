@@ -1,0 +1,62 @@
+#!/usr/bin/env bash
+# docket-runner stack ops entrypoint (research-triage#323's shape, cut down). Lives in the stack
+# directory next to answers.env, compose.yaml and render.mjs; every verb runs from there.
+#
+#   rt render                 answers.env -> .env + app.env (node render.mjs; exit 2 on a forbidden key)
+#   rt up                     docker compose up -d, then wait for the runner's healthcheck
+#   rt pull-and-recreate      compose pull -> up -d (the deploy's container swap); prints old -> new image id
+#   rt set-image-tag TAG      rewrite answers.env's IMAGE_TAG to TAG (then ./rt render)
+#   rt health                 GET /readyz on the published loopback port, retried up to RT_READYZ_TIMEOUT_S (60)
+#   rt logs [args...]         docker compose logs (-f by default)
+#   rt down                   docker compose down (the claude-home volume survives)
+set -euo pipefail
+cd "$(dirname "$(readlink -f "$0")")"
+
+die() { echo "rt: $*" >&2; exit 1; }
+need_env() { [ -f .env ] || die ".env missing -- run ./rt render"; grep -q '^IMAGE_TAG=' .env || die ".env has no IMAGE_TAG -- run ./rt render"; }
+env_value() { sed -n "s/^$1=//p" .env | head -1 | sed "s/^'\(.*\)'$/\1/"; }
+
+wait_healthy() {
+  local id; id="$(docker compose ps -q runner)"
+  [ -n "$id" ] || die "runner container not found"
+  for _ in $(seq 1 "${RT_HEALTHY_TIMEOUT_S:-90}"); do
+    case "$(docker inspect -f '{{.State.Health.Status}}' "$id" 2>/dev/null || echo unknown)" in
+      healthy) echo "runner: healthy"; return 0 ;;
+      unhealthy) docker compose logs --tail 40 runner >&2; die "runner: unhealthy" ;;
+    esac
+    sleep 1
+  done
+  die "runner: not healthy after ${RT_HEALTHY_TIMEOUT_S:-90}s"
+}
+
+case "${1:-}" in
+  render)
+    node render.mjs "$(pwd)" ;;
+  up)
+    need_env; docker compose up -d; wait_healthy ;;
+  pull-and-recreate)
+    need_env
+    old="$(docker compose images -q runner 2>/dev/null | head -1 || true)"
+    docker compose pull runner
+    docker compose up -d --force-recreate runner
+    new="$(docker compose images -q runner 2>/dev/null | head -1 || true)"
+    echo "runner image: ${old:-none} -> ${new:-none}"
+    wait_healthy ;;
+  set-image-tag)
+    [ -n "${2:-}" ] || die "usage: rt set-image-tag TAG"
+    if grep -q '^IMAGE_TAG=' answers.env; then sed -i "s|^IMAGE_TAG=.*|IMAGE_TAG=$2|" answers.env; else printf 'IMAGE_TAG=%s\n' "$2" >> answers.env; fi
+    echo "answers.env: IMAGE_TAG=$2 -- now run ./rt render" ;;
+  health)
+    need_env; port="$(env_value HEALTH_PORT)"; port="${port:-8787}"
+    for _ in $(seq 1 "${RT_READYZ_TIMEOUT_S:-60}"); do
+      if body="$(curl -fsS "http://127.0.0.1:${port}/readyz" 2>/dev/null)"; then echo "$body"; exit 0; fi
+      sleep 1
+    done
+    curl -sS "http://127.0.0.1:${port}/readyz" || true; echo; die "readyz not ok" ;;
+  logs)
+    shift; docker compose logs "${@:--f}" ;;
+  down)
+    docker compose down ;;
+  *)
+    sed -n '2,12p' "$0"; exit 64 ;;
+esac

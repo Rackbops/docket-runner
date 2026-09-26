@@ -1,0 +1,10 @@
+node_modules/
+dist/
+coverage/
+*.log
+*.tsbuildinfo
+.DS_Store
+# rendered deploy files live in the stack directory on the host, never here
+deploy/.env
+deploy/app.env
+deploy/answers.env

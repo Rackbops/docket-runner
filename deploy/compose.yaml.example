@@ -1,0 +1,38 @@
+# docket-runner stack on roshne's host. Copy to the stack directory (e.g. /opt/docket-runner/prod)
+# as compose.yaml next to answers.env; `./rt render` writes .env + app.env; `./rt up` starts it.
+# No `name:` here on purpose: the compose project name comes from the rendered .env
+# (COMPOSE_PROJECT_NAME=docket-runner-<stack directory basename>), so two stacks on one box never
+# share a project.
+#
+# The runner is OUTBOUND ONLY: it polls city-hall through the edge and nothing reaches it. The
+# only published port is the health endpoint, host-side loopback, for `rt health` and a local
+# monitor. No tunnel, no sidecar.
+
+services:
+  runner:
+    # IMAGE / IMAGE_TAG come from .env. No fallback tag: compose refuses a .env without IMAGE_TAG.
+    image: ${IMAGE}:${IMAGE_TAG:?IMAGE_TAG is unset or blank -- run ./rt render}
+    # app.env is the container half: the credential, city-hall's address, the caps. The stack
+    # half (.env) never enters the container.
+    env_file: [app.env]
+    ports:
+      - "127.0.0.1:${HEALTH_PORT:-8787}:${HEALTH_PORT:-8787}"
+    volumes:
+      # The CLI's home: session files for resumed intake conversations (the transcripts the plan
+      # says to keep under a retention rule) and the CLI's own state. Not the credential: that
+      # arrives through app.env on every start.
+      - claude-home:/home/node/.claude
+    healthcheck:
+      # /readyz: the credential works (a real, cached claude -p probe) and the loop is running.
+      # node's own fetch is the probe: the slim base ships no curl.
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:${HEALTH_PORT:-8787}/readyz').then(r => process.exit(r.ok ? 0 : 1), () => process.exit(1))"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
+    # Restarts the same image it was created from and never re-checks the registry: publishing an
+    # image deploys nothing. `rt pull-and-recreate` is the deploy.
+    restart: unless-stopped
+
+volumes:
+  claude-home:

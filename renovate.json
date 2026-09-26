@@ -1,0 +1,14 @@
+{
+  "$schema": "https://docs.renovatebot.com/renovate-schema.json",
+  "extends": ["github>Rackbops/renovate-config"],
+  "customManagers": [
+    {
+      "customType": "regex",
+      "description": "The Claude CLI pinned in the Dockerfile: bump it like any npm dependency.",
+      "managerFilePatterns": ["/^Dockerfile$/"],
+      "matchStrings": ["npm install -g @anthropic-ai/claude-code@(?<currentValue>[0-9][^\\s&]*)"],
+      "depNameTemplate": "@anthropic-ai/claude-code",
+      "datasourceTemplate": "npm"
+    }
+  ]
+}
