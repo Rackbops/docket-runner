@@ -1,0 +1,13 @@
+# Every stage re-installs and re-builds what it needs; nothing built on the host enters the
+# context, and no env file anywhere in the tree does either (the build never reads one).
+node_modules
+dist
+coverage
+*.log
+.git
+.github
+docs
+deploy/.env
+deploy/app.env
+deploy/answers.env
+**/*.md

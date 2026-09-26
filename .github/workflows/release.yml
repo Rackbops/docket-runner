@@ -1,0 +1,80 @@
+name: release
+
+# Publishes the container image to GHCR: `x.y.z` (the tag without the v) plus `latest` on a v*
+# tag; `dev` plus `sha-<7>` on every push to main, so a deploy can pin an immutable tag.
+# research-triage's release.yml, minus its submodule and PAT.
+on:
+  push:
+    tags: ["v*"]
+    branches: [main]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "existing v* tag to build and publish the image for"
+        required: true
+
+permissions:
+  contents: read
+  packages: write
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  image:
+    if: github.repository == 'Rackbops/docket-runner'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ github.event.inputs.tag }}
+
+      - uses: docker/setup-buildx-action@v4
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v4
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Derive the image tags
+        id: meta
+        shell: bash
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          REF_TYPE: ${{ github.ref_type }}
+          REF_NAME: ${{ github.ref_name }}
+          DISPATCH_TAG: ${{ github.event.inputs.tag }}
+          SHA: ${{ github.sha }}
+        run: |
+          image="ghcr.io/rackbops/docket-runner"
+          tag=""
+          if [ "$EVENT_NAME" = "workflow_dispatch" ]; then
+            [ -n "$DISPATCH_TAG" ] || { echo "::error::workflow_dispatch needs a v* tag input"; exit 1; }
+            tag="$DISPATCH_TAG"
+          elif [ "$REF_TYPE" = "tag" ]; then
+            tag="$REF_NAME"
+          fi
+          if [ -n "$tag" ]; then
+            case "$tag" in v*) ;; *) echo "::error::'$tag' is not a v* tag"; exit 1 ;; esac
+            tags="${image}:${tag#v},${image}:latest"
+          else
+            tags="${image}:dev,${image}:sha-${SHA:0:7}"
+          fi
+          revision="$(git rev-parse HEAD)"
+          echo "tags=$tags" >> "$GITHUB_OUTPUT"
+          echo "revision=$revision" >> "$GITHUB_OUTPUT"
+          echo "tags=$tags revision=$revision"
+
+      - name: Build and push
+        uses: docker/build-push-action@v7
+        with:
+          context: .
+          platforms: linux/amd64
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: |
+            org.opencontainers.image.source=https://github.com/Rackbops/docket-runner
+            org.opencontainers.image.revision=${{ steps.meta.outputs.revision }}
