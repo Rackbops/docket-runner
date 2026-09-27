@@ -1,2 +1,8 @@
+# pnpm's settings file (pnpm 10+), not a workspace: this repo is one package.
+#
+# pnpm refuses to resolve a version published more recently than its minimum release age, a
+# supply-chain guard against a just-hijacked release. Our own library publishes from our own CI
+# by OIDC, and the runner adopts a new @rackbops/docket-core the day it ships, so it is exempt.
+# (pnpm wrote the first version of this entry itself, pinned to 0.1.0, when 0.1.0 was minutes old.)
 minimumReleaseAgeExclude:
-  - '@rackbops/docket-core@0.1.0'
+  - '@rackbops/docket-core'
