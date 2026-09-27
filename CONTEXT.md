@@ -52,3 +52,11 @@ public, so the image is public and `rt` needs no registry login. `just version X
 Labels from Rackbops/Tooling's `sync_labels.py`; Renovate through `github>Rackbops/renovate-config`
 plus a regex manager for the CLI pin in the Dockerfile; `push-notify.yml` needs the
 `DISCORD_PUSH_WEBHOOK` secret.
+
+## pnpm's minimum release age
+
+pnpm 12 refuses to install a version published less than a day ago (`ERR_PNPM_MINIMUM_RELEASE_AGE_VIOLATION`),
+and it checks the policy against the lockfile even under `--frozen-lockfile`. `pnpm-workspace.yaml`
+(pnpm's settings file here, not a workspace) exempts `@rackbops/docket-core`, our own library, which
+this runner adopts the day it ships. The Dockerfile copies that file into the build stage for the
+same reason; leaving it out fails the image build for 24 hours after every docket release.

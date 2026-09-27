@@ -14,9 +14,13 @@
 FROM node:24-bookworm-slim AS build
 RUN npm install -g pnpm@12.4.2
 WORKDIR /app
-COPY package.json pnpm-lock.yaml tsconfig.json ./
+# pnpm-workspace.yaml is pnpm's settings file, not a workspace: it carries the minimum-release-age
+# exemption for @rackbops/docket-core, and pnpm enforces that policy against the lockfile even
+# with --frozen-lockfile, so an install without the file fails on a fresh release of the library.
+COPY package.json pnpm-lock.yaml pnpm-workspace.yaml tsconfig.json ./
 RUN pnpm install --frozen-lockfile
 COPY src ./src
+COPY scripts ./scripts
 RUN pnpm build
 
 FROM node:24-bookworm-slim
