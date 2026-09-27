@@ -1,0 +1,2 @@
+minimumReleaseAgeExclude:
+  - '@rackbops/docket-core@0.1.0'

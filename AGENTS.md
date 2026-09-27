@@ -28,9 +28,15 @@ an `ANTHROPIC_*` variable, an SDK dependency, or a `--bare` flag (it never reads
 - **A service with zero runtime dependencies.** Node's `http`, `child_process` and `fetch`. It
   holds the token, so the dependency tree stays empty; `@rackbops/node-app-kit` was considered
   and declined for that reason (revisit if the health server grows).
-- **It knows no task type.** A Job is a `claude -p` call as data (`src/contract.ts`); the
-  runner never inspects a prompt, never chooses a model on its own, never decides what to do
-  with a result. Type logic lives in Rackbops/docket and city-hall.
+- **It knows no task type.** A Job is a `claude -p` call as data; the runner never inspects a
+  prompt, never chooses a model on its own, never decides what to do with a result. Type logic
+  lives in Rackbops/docket and city-hall.
+- **The wire shapes are `@rackbops/docket-core`'s** (`JobSpec`, `JobResult`, `FailureKind`),
+  imported in `src/contract.ts` as **types only** from a devDependency, so the zero-runtime-
+  dependency rule holds: `verbatimModuleSyntax` erases the import, `scripts/check-no-runtime-
+  deps.mjs` fails the build on a value import, and the Dockerfile's smoke check repeats it. The
+  runner's own are `Lease`, `Job` (spec + id + lease), `parseJob`, and mirrors of the default
+  tool lists that `test/contract.test.ts` pins to the core's.
 - **Outbound only.** It polls city-hall through the edge with a Cloudflare Access service token
   and its usr-issued credential. Nothing listens except the health endpoint, published on host
   loopback.

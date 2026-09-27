@@ -169,6 +169,9 @@ importers:
       '@biomejs/biome':
         specifier: ^2.5.14
         version: 2.5.14
+      '@rackbops/docket-core':
+        specifier: ^0.1.0
+        version: 0.1.0
       '@types/node':
         specifier: ^26.6.1
         version: 26.6.2
@@ -250,6 +253,10 @@ packages:
 
   '@oxc-project/types@0.151.0':
     resolution: {integrity: sha512-J1yXrIlNDZVzE3ada310xeAw7nH8yCAyLPuUIsjKatFPmfn5bS1oW+cM+QsGOtVWd5nhSpbwZWx/rue+r5Z+PA==}
+
+  '@rackbops/docket-core@0.1.0':
+    resolution: {integrity: sha512-LFz2AzmjxLBmS+wYIIsnRkzCpZV+o/WcaSMIwmQ+dGqIS0YKn47FGI0KUOQeX9tU2U9FkHKEL2sC4A+M9ijCHQ==}
+    engines: {node: '>=24'}
 
   '@rolldown/binding-android-arm-eabi@1.2.11':
     resolution: {integrity: sha512-A5kXfGKvKWWZE0TtPrfsvT+q4Y5d1QG8gGUzpYjGydM+fARM9MuX90PrXYXe0XbsDVgyxxNzHo6giCj90bsFNw==}
@@ -797,6 +804,8 @@ snapshots:
       '@jridgewell/sourcemap-codec': 1.6.0
 
   '@oxc-project/types@0.151.0': {}
+
+  '@rackbops/docket-core@0.1.0': {}
 
   '@rolldown/binding-android-arm-eabi@1.2.11':
     optional: true

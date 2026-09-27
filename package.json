@@ -14,7 +14,7 @@
   },
   "packageManager": "pnpm@12.4.2",
   "scripts": {
-    "build": "tsc",
+    "build": "tsc && node scripts/check-no-runtime-deps.mjs",
     "typecheck": "tsc --noEmit -p tsconfig.test.json",
     "test": "vitest run && node --test deploy/render.test.mjs",
     "lint": "biome check .",
@@ -24,6 +24,7 @@
   },
   "devDependencies": {
     "@biomejs/biome": "^2.5.14",
+    "@rackbops/docket-core": "^0.1.0",
     "@types/node": "^26.6.1",
     "typescript": "^7.0.0",
     "vitest": "^5.0.1"

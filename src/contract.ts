@@ -1,12 +1,19 @@
 /**
  * The Job / JobResult wire shapes between city-hall's execute-lane API and this runner.
  *
- * Source of truth: these move into `@rackbops/docket-core` as the Executor port's types once that
- * package publishes them (Rackbops/docket#1 first); until then this file is the v0 contract and
- * city-hall#2 implements the same shape. The runner knows no task type -- a Job is a `claude -p`
- * call as data, a JobResult is what came back, classified. Plan: Rackbops/Tooling,
- * research/city-hall-task-tracker.md, sections 5.4 and 5.12.
+ * The shapes themselves are `@rackbops/docket-core`'s (`JobSpec`, `JobResult` and friends: the
+ * Executor port's types, plan sections 5.4 and 5.12), imported as TYPES ONLY so the runner keeps
+ * zero runtime dependencies -- `verbatimModuleSyntax` erases a type-only import, and the image's
+ * final stage carries no node_modules. What is the runner's own: the `Lease` city-hall issues with
+ * a claim, `Job` (a spec plus its id and lease), `parseJob` (the wire validation), and mirrors of
+ * the two default tool lists, which a test pins to the core's values so they cannot drift. The
+ * runner knows no task type -- a Job is a `claude -p` call as data, a JobResult is what came back,
+ * classified.
  */
+
+import type { FailureKind, JobFailure, JobResult, JobSpec, JobSuccess } from "@rackbops/docket-core"
+
+export type { FailureKind, JobFailure, JobResult, JobSpec, JobSuccess }
 
 export interface Lease {
   /** Opaque token city-hall issued with the claim; every heartbeat and the outcome carry it. */
@@ -17,68 +24,18 @@ export interface Lease {
   heartbeatSeconds: number
 }
 
-export interface Job {
+/** A claimed Job: the core's spec plus the occurrence id (the outcome's idempotency key) and the lease. */
+export interface Job extends JobSpec {
   /** The occurrence id: the idempotency key for the outcome. */
   id: string
   lease: Lease
-  /** The whole prompt; sent on stdin, never argv. */
-  prompt: string
-  /** `--model`; the runner's default applies when absent. */
-  model?: string
-  /** `--json-schema`; when present the result must carry `structuredOutput`. */
-  jsonSchema?: Record<string, unknown>
-  /** `--allowedTools`; defaults to the read-and-web set. */
-  allowedTools?: string[]
-  /** `--disallowedTools`; defaults to the shell and file tools. */
-  disallowedTools?: string[]
-  /** `--max-turns`; the runner's default applies when absent. */
-  maxTurns?: number
-  /** `--max-budget-usd`; the runner's default applies when absent. */
-  maxBudgetUsd?: number
-  /** `--resume <session_id>`: continue a conversation (the intake dialogue, E10). */
-  resumeSessionId?: string
-  /** Per-Job wall-clock limit for the CLI call, in milliseconds; the runner's default when absent. */
-  timeoutMs?: number
 }
 
-export type FailureKind =
-  | "auth_failed"
-  | "usage_limit"
-  | "turn_cap"
-  | "budget_cap"
-  | "schema_miss"
-  | "timeout"
-  | "error"
-
-export interface JobSuccess {
-  kind: "success"
-  /** The CLI's `result` text. */
-  result: string
-  /** The CLI's `structured_output` when the Job carried a JSON schema. */
-  structuredOutput?: unknown
-  sessionId?: string
-  /** The CLI's client-side list-price estimate; a proxy under a subscription, not a bill (5.12). */
-  totalCostUsd?: number
-  usage?: unknown
-  numTurns?: number
-  durationMs: number
-}
-
-export interface JobFailure {
-  kind: FailureKind
-  /** Operator-readable, secret-free. */
-  detail: string
-  /** For `usage_limit`: when the window resets, if the CLI's message said. */
-  resetsAt?: string
-  /** The CLI's `api_error_status` when it reported one. */
-  apiErrorStatus?: number
-  sessionId?: string
-  totalCostUsd?: number
-  durationMs: number
-}
-
-export type JobResult = JobSuccess | JobFailure
-
+/**
+ * Mirrors of `@rackbops/docket-core`'s DEFAULT_ALLOWED_TOOLS / DEFAULT_DISALLOWED_TOOLS (plan 5.6):
+ * the read-and-web allowlist every run gets, and the shell and file tools no run may use. Values,
+ * not types, so they are copied rather than imported; `test/contract.test.ts` asserts equality.
+ */
 export const DEFAULT_ALLOWED_TOOLS = ["WebSearch", "WebFetch"] as const
 export const DEFAULT_DISALLOWED_TOOLS = ["Bash", "Edit", "Write", "NotebookEdit", "Task"] as const
 

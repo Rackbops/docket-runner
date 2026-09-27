@@ -3,7 +3,8 @@
 #   build -- pnpm install + tsc -> /app/dist
 #   final -- the compiled output, tini, and the pinned Claude CLI, running as the unprivileged
 #            `node` user. No runtime npm dependencies: the runner is stdlib-only on purpose, since
-#            this process holds the subscription token.
+#            this process holds the subscription token. `@rackbops/docket-core` is a devDependency
+#            used for types only; the smoke check below refuses a compiled runtime import of it.
 #
 # Subscription-only is a hard constraint: nothing here (no ARG, no ENV) can carry a credential.
 # CLAUDE_CODE_OAUTH_TOKEN arrives at RUN time through compose's env_file and is never baked into a
@@ -31,7 +32,7 @@ WORKDIR /app
 COPY package.json ./
 COPY --from=build /app/dist ./dist
 # Build-time smoke check: the entry point exists and the CLI runs (its version, not its auth).
-RUN test -f dist/index.js && claude --version
+RUN test -f dist/index.js && ! grep -rq 'from "@rackbops/' dist && claude --version
 ENV NODE_ENV=production \
   HOME=/home/node \
   HEALTH_PORT=8787 \
