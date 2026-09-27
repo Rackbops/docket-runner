@@ -20,7 +20,7 @@ loop:  claim Job from city-hall  ->  claude -p (prompt on stdin, JSON out)  ->  
 - **The wall is the CLI's own.** `--allowedTools WebSearch,WebFetch` by default, shell and file tools denied, `--max-turns` and `--max-budget-usd` on every run, `--resume` only when a Job continues a conversation, `--no-session-persistence` otherwise. The prompt travels on stdin, never argv.
 - **Every result is classified**, not just success: `auth_failed` (401: stop claiming, alarm), `usage_limit` (stop until the reset the CLI names, or an hour), `turn_cap`, `budget_cap`, `schema_miss`, `timeout`, `error`. A limit or an auth failure charges nobody; city-hall requeues.
 - **Health that tells the truth.** `/readyz` runs a real `claude -p "ok"` probe (cached 6 h on success, 5 min on failure) because `claude auth status` reports a bogus token as logged in; it also reports the CLI version and the loop's last claim, heartbeat and outcome.
-- **Zero runtime dependencies.** Node's `http`, `child_process` and `fetch`. This process holds the token; the smaller the tree, the better.
+- **Zero runtime dependencies.** Node's `http`, `child_process` and `fetch`. This process holds the token; the smaller the tree, the better. The Job and JobResult shapes are [`@rackbops/docket-core`](https://github.com/Rackbops/docket)'s, imported as types only (a devDependency); the build refuses a runtime import of it.
 
 ## The city-hall contract
 

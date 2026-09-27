@@ -3,7 +3,8 @@
 #   build -- pnpm install + tsc -> /app/dist
 #   final -- the compiled output, tini, and the pinned Claude CLI, running as the unprivileged
 #            `node` user. No runtime npm dependencies: the runner is stdlib-only on purpose, since
-#            this process holds the subscription token.
+#            this process holds the subscription token. `@rackbops/docket-core` is a devDependency
+#            used for types only; the smoke check below refuses a compiled runtime import of it.
 #
 # Subscription-only is a hard constraint: nothing here (no ARG, no ENV) can carry a credential.
 # CLAUDE_CODE_OAUTH_TOKEN arrives at RUN time through compose's env_file and is never baked into a
@@ -13,9 +14,13 @@
 FROM node:24-bookworm-slim AS build
 RUN npm install -g pnpm@12.4.2
 WORKDIR /app
-COPY package.json pnpm-lock.yaml tsconfig.json ./
+# pnpm-workspace.yaml is pnpm's settings file, not a workspace: it carries the minimum-release-age
+# exemption for @rackbops/docket-core, and pnpm enforces that policy against the lockfile even
+# with --frozen-lockfile, so an install without the file fails on a fresh release of the library.
+COPY package.json pnpm-lock.yaml pnpm-workspace.yaml tsconfig.json ./
 RUN pnpm install --frozen-lockfile
 COPY src ./src
+COPY scripts ./scripts
 RUN pnpm build
 
 FROM node:24-bookworm-slim
@@ -31,7 +36,7 @@ WORKDIR /app
 COPY package.json ./
 COPY --from=build /app/dist ./dist
 # Build-time smoke check: the entry point exists and the CLI runs (its version, not its auth).
-RUN test -f dist/index.js && claude --version
+RUN test -f dist/index.js && ! grep -rq 'from "@rackbops/' dist && claude --version
 ENV NODE_ENV=production \
   HOME=/home/node \
   HEALTH_PORT=8787 \
