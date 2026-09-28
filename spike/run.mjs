@@ -5,7 +5,7 @@
 // Run it on roshne's machine after `pnpm build`; see spike/README.md. It spends subscription
 // usage and never an API key: it refuses to start with one set, as the runner does.
 import { execFileSync } from "node:child_process"
-import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs"
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { dirname, join, resolve } from "node:path"
 import { fileURLToPath } from "node:url"
@@ -148,4 +148,8 @@ for (const c of cases) {
 }
 
 writeFileSync(join(out, "report.md"), renderReport({ startedAt, cliVersion, runs }))
+process.chdir(here)
+for (const dir of [workDir, env.CLAUDE_CONFIG_DIR]) {
+  if (dir) rmSync(dir, { recursive: true, force: true })
+}
 console.log(`+ report: ${join(out, "report.md")}`)
