@@ -16,10 +16,11 @@
   "scripts": {
     "build": "tsc && node scripts/check-no-runtime-deps.mjs",
     "typecheck": "tsc --noEmit -p tsconfig.test.json",
-    "test": "vitest run && node --test deploy/render.test.mjs",
+    "test": "vitest run && node --test deploy/render.test.mjs spike/lib.test.mjs",
     "lint": "biome check .",
     "fix": "biome check --write .",
     "start": "node dist/index.js",
+    "spike": "node spike/run.mjs",
     "check": "pnpm lint && pnpm typecheck && pnpm test && pnpm build"
   },
   "devDependencies": {

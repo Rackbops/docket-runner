@@ -1,0 +1,103 @@
+{
+  "note": "The three model-driven categories the plan's web-search spike has to prove (plan section 6, 'Web tools in the run'). Edit the inputs to match real asks; keep the shapes.",
+  "cases": [
+    {
+      "id": "research",
+      "category": 5,
+      "maxTurns": 20,
+      "maxBudgetUsd": 1,
+      "timeoutMs": 600000,
+      "prompt": "You are researching a one-off question for a person, who will read your answer as a Discord DM.\n\nQuestion: What are the practical tradeoffs of a heat pump water heater installed in an unheated basement in a cold US climate (for example Zone 5), compared with a standard electric tank? Cover efficiency in winter, noise, space and airflow needs, cost, and any rebates that apply broadly.\n\nUse web search and fetch pages to check facts. Prefer primary sources (manufacturers, government, utilities, standards bodies). Every claim that a reader might act on needs a source you actually opened. Say plainly where sources disagree or where you are unsure.",
+      "schema": {
+        "type": "object",
+        "properties": {
+          "summary": { "type": "string", "description": "The answer in at most 150 words." },
+          "findings": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "claim": { "type": "string" },
+                "sources": {
+                  "type": "array",
+                  "items": { "type": "string", "description": "A URL you opened." }
+                }
+              },
+              "required": ["claim", "sources"]
+            }
+          },
+          "uncertain": { "type": "array", "items": { "type": "string" } }
+        },
+        "required": ["summary", "findings", "uncertain"]
+      }
+    },
+    {
+      "id": "scout",
+      "category": 1,
+      "maxTurns": 20,
+      "maxBudgetUsd": 1,
+      "timeoutMs": 600000,
+      "prompt": "You are a daily interest scout for one person. Find up to five things published or available in the last 30 days that this person would find genuinely interesting, seen through a gift lens.\n\nInterests: birding, sourdough baking, Japanese hand-tool woodworking, cozy mystery novels.\nLens: birthday -- fun or a little grandiose, something they would not buy for themselves.\nAlready shown (do not repeat): none.\n\nUse web search and fetch pages to confirm each item exists and is current. For each item give the page you confirmed it on, why it fits the interest and the lens, and a price if one is shown. Skip anything you could not open.",
+      "schema": {
+        "type": "object",
+        "properties": {
+          "items": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "title": { "type": "string" },
+                "interest": { "type": "string" },
+                "why": { "type": "string" },
+                "price": { "type": "string" },
+                "url": { "type": "string" }
+              },
+              "required": ["title", "interest", "why", "url"]
+            }
+          }
+        },
+        "required": ["items"]
+      }
+    },
+    {
+      "id": "wantlist",
+      "category": 2,
+      "maxTurns": 20,
+      "maxBudgetUsd": 1,
+      "timeoutMs": 600000,
+      "prompt": "You watch secondary markets for items one person is missing. Look for current listings of this out-of-print item:\n\nItem: Mage Knight Board Game: The Lost Legion expansion (WizKids, 2012), English, complete.\n\nSearch eBay and other secondary-market sites (BoardGameGeek marketplace, collector shops). For each listing you can open, record the price, condition, the seller or shop, and due-diligence signals about the seller and the site: feedback or reviews you could see, account age, return policy, anything that looks like bad faith (stock photos, price far below market, off-platform payment requests). Give signals with their source, not a verdict about a real person. If you find no live listing, say so; do not invent one.",
+      "schema": {
+        "type": "object",
+        "properties": {
+          "listings": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "site": { "type": "string" },
+                "url": { "type": "string" },
+                "price": { "type": "string" },
+                "condition": { "type": "string" },
+                "seller": { "type": "string" },
+                "signals": {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "properties": {
+                      "signal": { "type": "string" },
+                      "source": { "type": "string" }
+                    },
+                    "required": ["signal", "source"]
+                  }
+                }
+              },
+              "required": ["site", "url", "price", "signals"]
+            }
+          },
+          "notFound": { "type": "boolean" }
+        },
+        "required": ["listings", "notFound"]
+      }
+    }
+  ]
+}
