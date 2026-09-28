@@ -1,6 +1,14 @@
 // Pure helpers for the web-search spike: argument parsing, the URLs a result cites, and the
 // report. No I/O here, so spike/lib.test.mjs covers them without a model or a network.
 
+/**
+ * Spike-only flags on top of the runner's. The runner runs in a clean container; the spike runs
+ * on a person's own machine, inside their Claude setup. `--tools` makes the web pair the only
+ * tools the run can use at all (`--allowedTools` only pre-approves), and `--strict-mcp-config`
+ * with no `--mcp-config` loads none of their MCP servers.
+ */
+export const ISOLATION_FLAGS = ["--tools", "WebSearch,WebFetch", "--strict-mcp-config"]
+
 export const USAGE = `usage: node spike/run.mjs [--case <id>]... [--repeat <n>] [--out <dir>]
        [--model <name>] [--claude-bin <path>] [--no-link-check]
 
@@ -17,10 +25,12 @@ export function parseArgs(argv) {
     claudeBin: "claude",
     linkCheck: true,
   }
-  for (let i = 0; i < argv.length; i++) {
-    const arg = argv[i]
+  // `pnpm spike -- --case x` hands the script a literal `--` first; it separates nothing here.
+  const args = argv[0] === "--" ? argv.slice(1) : argv
+  for (let i = 0; i < args.length; i++) {
+    const arg = args[i]
     const value = () => {
-      const v = argv[++i]
+      const v = args[++i]
       if (v === undefined || v.startsWith("--")) throw new Error(`${arg} needs a value\n${USAGE}`)
       return v
     }
@@ -39,7 +49,10 @@ export function parseArgs(argv) {
   return opts
 }
 
-/** Every distinct http(s) URL anywhere in a structured result, in the order first seen. */
+/** At most this many links are checked per run, so a long answer cannot stretch a run by minutes. */
+export const MAX_LINKS = 30
+
+/** Every distinct http(s) URL anywhere in a structured result, first seen first, up to `MAX_LINKS`. */
 export function citedUrls(value) {
   const seen = new Set()
   const walk = (v) => {
@@ -53,7 +66,7 @@ export function citedUrls(value) {
     }
   }
   walk(value)
-  return [...seen]
+  return [...seen].slice(0, MAX_LINKS)
 }
 
 /** How many things the result offers: findings, items or listings. */

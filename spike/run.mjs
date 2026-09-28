@@ -5,13 +5,14 @@
 // Run it on roshne's machine after `pnpm build`; see spike/README.md. It spends subscription
 // usage and never an API key: it refuses to start with one set, as the runner does.
 import { execFileSync } from "node:child_process"
-import { mkdirSync, readFileSync, writeFileSync } from "node:fs"
+import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs"
+import { tmpdir } from "node:os"
 import { dirname, join, resolve } from "node:path"
 import { fileURLToPath } from "node:url"
 
 import { buildArgs, classify, realExecutor } from "../dist/claude.js"
 import { buildSubprocessEnv, FORBIDDEN_ENV } from "../dist/subprocess-env.js"
-import { citedUrls, parseArgs, renderReport } from "./lib.mjs"
+import { citedUrls, ISOLATION_FLAGS, parseArgs, renderReport } from "./lib.mjs"
 
 const here = dirname(fileURLToPath(import.meta.url))
 
@@ -52,12 +53,28 @@ const config = {
 }
 const env = buildSubprocessEnv()
 if (!env.CLAUDE_CODE_OAUTH_TOKEN) delete env.CLAUDE_CODE_OAUTH_TOKEN
+// A path given for the CLI still has to work after the chdir below.
+if (/[\\/]/.test(opts.claudeBin)) opts.claudeBin = resolve(opts.claudeBin)
+// Run the CLI from an empty directory, so no repo's CLAUDE.md or project settings reach it. With a
+// token, also give it an empty config directory: then no user CLAUDE.md, hooks, plugins or
+// settings load either, which is as close to the runner's clean container as a desktop gets.
+const workDir = mkdtempSync(join(tmpdir(), "docket-spike-"))
+if (env.CLAUDE_CODE_OAUTH_TOKEN)
+  env.CLAUDE_CONFIG_DIR = mkdtempSync(join(tmpdir(), "docket-spike-home-"))
+process.chdir(workDir)
 
 let cliVersion = "unknown"
 try {
-  cliVersion = execFileSync(opts.claudeBin, ["--version"], { env, encoding: "utf8" }).trim()
-} catch {
-  console.error(`could not run ${opts.claudeBin} --version; is the Claude CLI on PATH?`)
+  cliVersion = execFileSync(opts.claudeBin, ["--version"], {
+    env,
+    encoding: "utf8",
+    timeout: 30_000,
+  }).trim()
+} catch (err) {
+  console.error(`could not run ${opts.claudeBin} --version: ${err.message}`)
+  console.error(
+    "On Windows pass --claude-bin with the full path to claude.exe (a .cmd shim cannot run).",
+  )
   process.exit(1)
 }
 
@@ -72,7 +89,7 @@ async function checkLinks(urls) {
         headers: { "user-agent": "Mozilla/5.0 (docket-runner web-search spike)" },
       })
       results.push({ url, status: res.status, ok: res.ok })
-      await res.body?.cancel()
+      await res.body?.cancel().catch(() => {})
     } catch (err) {
       results.push({
         url,
@@ -84,6 +101,9 @@ async function checkLinks(urls) {
   }
   return results
 }
+
+/** Outcomes every later run would repeat: a spent usage window, or a login that does not work. */
+const STOPS = new Set(["usage_limit", "auth_failed"])
 
 console.log(`web-search spike: ${cases.length} case(s) x ${opts.repeat}, CLI ${cliVersion}`)
 console.log(`results: ${out}`)
@@ -98,7 +118,7 @@ for (const c of cases) {
       timeoutMs: c.timeoutMs,
     }
     console.log(`- ${c.id} run ${repeat}: running (up to ${c.timeoutMs / 1000} s)`)
-    const args = buildArgs(job, config)
+    const args = [...buildArgs(job, config), ...ISOLATION_FLAGS]
     const exec = await realExecutor({
       bin: opts.claudeBin,
       args,
@@ -118,12 +138,13 @@ for (const c of cases) {
     writeFileSync(join(out, `${c.id}-${repeat}.json`), `${JSON.stringify(run, null, 2)}\n`)
     const cost = result.totalCostUsd?.toFixed(2) ?? "-"
     console.log(`  = ${result.kind}, ${result.numTurns ?? "-"} turns, about ${cost} USD`)
-    if (result.kind === "usage_limit") {
-      console.log("  ! usage limit reached; stopping. Resume later with --case for what is left.")
+    if (STOPS.has(result.kind)) {
+      console.log(`  ! ${result.kind}; stopping. ${result.detail ?? ""}`.trimEnd())
+      console.log("    Fix it, then resume with --case for what is left.")
       break
     }
   }
-  if (runs.at(-1)?.result.kind === "usage_limit") break
+  if (STOPS.has(runs.at(-1)?.result.kind)) break
 }
 
 writeFileSync(join(out, "report.md"), renderReport({ startedAt, cliVersion, runs }))

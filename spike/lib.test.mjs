@@ -1,7 +1,7 @@
 import assert from "node:assert/strict"
 import { test } from "node:test"
 
-import { citedUrls, itemCount, parseArgs, renderReport } from "./lib.mjs"
+import { citedUrls, itemCount, MAX_LINKS, parseArgs, renderReport } from "./lib.mjs"
 
 test("parseArgs reads every option and refuses what it does not know", () => {
   assert.deepEqual(
@@ -15,6 +15,7 @@ test("parseArgs reads every option and refuses what it does not know", () => {
       linkCheck: false,
     },
   )
+  assert.deepEqual(parseArgs(["--", "--case", "wantlist"]).cases, ["wantlist"], "pnpm's --")
   assert.throws(() => parseArgs(["--repeat", "9"]), /--repeat is 1 to 5/)
   assert.throws(() => parseArgs(["--case"]), /--case needs a value/)
   assert.throws(() => parseArgs(["--bogus"]), /unknown argument --bogus/)
@@ -34,6 +35,8 @@ test("citedUrls finds each URL once, anywhere in the result, without trailing pu
     "https://z.test/q",
   ])
   assert.deepEqual(citedUrls(null), [])
+  const many = Array.from({ length: 50 }, (_, i) => `https://example.org/${i}`)
+  assert.equal(citedUrls(many).length, MAX_LINKS)
 })
 
 test("itemCount counts what each case offers", () => {
