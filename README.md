@@ -46,6 +46,13 @@ just docker-build   # the image, locally
 
 Tests never run the real CLI: `test/fixtures/fake-claude.mjs` answers by `FAKE_CLAUDE_MODE`, and a fake city-hall in `test/loop.test.ts` records claims, heartbeats and outcomes. The one thing CI cannot prove is the credential itself; `/readyz` on roshne's host does.
 
+## The web-search spike
+
+[`spike/README.md`](spike/README.md): the one-day spike E8 runs before anything else is built,
+three cases (research, scout, want list) through the runner's own flags and classifier on the
+subscription, with a link check and a report to grade. Run it with `pnpm spike` on roshne's
+machine; it never talks to city-hall.
+
 ## Deploy
 
 [`deploy/README.md`](deploy/README.md): one stack directory, `answers.env`, `rt render`, `rt up`. Images publish to `ghcr.io/rackbops/docket-runner` on `v*` tags (`x.y.z`, `latest`) and on every push to main (`dev`, `sha-<7>`).
