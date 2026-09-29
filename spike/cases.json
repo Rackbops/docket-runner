@@ -34,10 +34,10 @@
     {
       "id": "scout",
       "category": 1,
-      "maxTurns": 20,
-      "maxBudgetUsd": 1,
+      "maxTurns": 30,
+      "maxBudgetUsd": 1.5,
       "timeoutMs": 600000,
-      "prompt": "You are a daily interest scout for one person. Find up to five things published or available in the last 30 days that this person would find genuinely interesting, seen through a gift lens.\n\nInterests: birding, sourdough baking, Japanese hand-tool woodworking, cozy mystery novels.\nLens: birthday -- fun or a little grandiose, something they would not buy for themselves.\nAlready shown (do not repeat): none.\n\nUse web search and fetch pages to confirm each item exists and is current. For each item give the page you confirmed it on, why it fits the interest and the lens, and a price if one is shown. Skip anything you could not open.",
+      "prompt": "You are a daily interest scout for one person. Find at least five and at most ten things published or available in the last 30 days that this person would find genuinely interesting, seen through a gift lens. If you cannot confirm five, return the ones you did confirm and say why in shortfall; never pad the list.\n\nInterests: birding, sourdough baking, Japanese hand-tool woodworking, cozy mystery novels.\nLens: birthday -- fun or a little grandiose, something they would not buy for themselves.\nAlready shown (do not repeat): none.\n\nUse web search and fetch pages to confirm each item exists and is current. For each item give the page you confirmed it on, why it fits the interest and the lens, and a price if one is shown. Skip anything you could not open.",
       "schema": {
         "type": "object",
         "properties": {
@@ -53,7 +53,12 @@
                 "url": { "type": "string" }
               },
               "required": ["title", "interest", "why", "url"]
-            }
+            },
+            "maxItems": 10
+          },
+          "shortfall": {
+            "type": "string",
+            "description": "Why fewer than five, when there are fewer than five."
           }
         },
         "required": ["items"]
