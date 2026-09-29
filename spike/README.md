@@ -32,9 +32,10 @@ pnpm spike                          # all three cases, once each
 pnpm spike --case scout --repeat 3  # one case, three times
 ```
 
-- **Cost.** Each run is capped at 20 turns and 1 USD of the CLI's estimate
-  (`spike/cases.json`); the CLI checks the cap between turns, so a run can end a little over it.
-  All three cases once is about 3 USD of estimated usage from the shared five-hour window, and
+- **Cost.** Each run is capped at 20 turns and 1 USD of the CLI's estimate, the scout at 30 turns
+  and 1.50 USD (`spike/cases.json`); the CLI checks the cap between turns, so a run can end a
+  little over it. All three cases once is at most about 3.50 USD of estimated usage from the
+  shared five-hour window, and
   `--repeat` multiplies that. It is an estimate against the subscription, not a bill. A usage
   limit or a failed login stops the run cleanly; resume later with `--case` for what is left.
 - **Credential.** The spike uses the CLI's own login on the machine, or
@@ -77,3 +78,19 @@ FAKE_CLAUDE_MODE=schema pnpm spike --claude-bin test/fixtures/fake-claude.mjs --
 
 `spike/lib.test.mjs` (part of `pnpm test`) covers the argument parsing, the URL extraction and
 the report.
+
+## First run (roshne, 2026-09-29, CLI 2.1.283)
+
+| Case | Turns | Est. USD | Links ok / cited | Relevant | True | Sourced | Honest |
+|---|---|---|---|---|---|---|---|
+| research | 13 | 0.60 | 9 / 10 | 5 | 5 | 5 | 5 |
+| scout | 25 | 0.95 | 2 / 2 | 4 | 5 | 3 | 5 |
+| wantlist | 11 | 0.55 | 1 / 6 | 2 | 2 | 1 | 5 |
+
+- Research is good enough to DM as is.
+- The scout returned two items to a prompt that said "up to five"; it now asks for five to ten
+  and reports a `shortfall` instead of padding. It also reported 25 turns against a cap of 20,
+  so its caps are now 30 turns and 1.50 USD.
+- Web search cannot see live secondary-market listings well: the case for category 2's plain-code
+  source adapters (the eBay Browse API, item 26) over more search.
+- Every case went past the runner's defaults of 8 turns and 0.5 USD, so web Jobs need their own caps.
