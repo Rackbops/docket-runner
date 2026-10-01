@@ -2,8 +2,11 @@ import type { Config } from "./config.js"
 import { type Job, type JobResult, parseJob } from "./contract.js"
 
 /**
- * The execute-lane API the runner expects from city-hall, as proposed in Lepid-Labs/city-hall#17
- * (not yet agreed; the runner follows whatever city-hall settles on):
+ * The execute-lane API the runner calls on city-hall, merged there by pull request
+ * Lepid-Labs/city-hall#18 (https://github.com/Lepid-Labs/city-hall/pull/18, commit 90a06ec). Its
+ * decision record (ADR 0002) is still proposed, pending Nazu's review on the proposal issue
+ * Lepid-Labs/city-hall#17 (https://github.com/Lepid-Labs/city-hall/issues/17); if that review
+ * changes the API, the runner follows:
  *
  *   POST /api/execute/claim                        -> 200 { job: Job } | 204 (nothing queued)
  *   POST /api/execute/jobs/:id/heartbeat { leaseToken } -> 204 | 409 (lease lost)

@@ -7,7 +7,9 @@ Job says, and posts the result back. It knows no task type: the types live in
 [Rackbops/docket](https://github.com/Rackbops/docket) and run in the tracker plugin
 ([Rackbops/rackbops-bot-plugins](https://github.com/Rackbops/rackbops-bot-plugins) `plugins/tracker`),
 which hands each model Job to city-hall; city-hall only queues and leases it, and this process
-only executes the CLI call it describes. The execute-lane API it calls is proposed to city-hall in
+only executes the CLI call it describes. The execute-lane API it calls is merged in city-hall
+(pull request [Lepid-Labs/city-hall#18](https://github.com/Lepid-Labs/city-hall/pull/18), commit
+`90a06ec`); its decision record is still proposed, pending Nazu's review on the proposal issue
 [Lepid-Labs/city-hall#17](https://github.com/Lepid-Labs/city-hall/issues/17).
 
 Design: Rackbops/Tooling, `research/city-hall-task-tracker.md`, section 5.12. Scaffold: [#1](https://github.com/Rackbops/docket-runner/issues/1).
@@ -27,7 +29,7 @@ loop:  claim Job from city-hall  ->  claude -p (prompt on stdin, JSON out)  ->  
 
 ## The city-hall contract
 
-The runner expects three endpoints, proposed to city-hall in [Lepid-Labs/city-hall#17](https://github.com/Lepid-Labs/city-hall/issues/17) and not yet agreed (bearer: the runner's usr credential; plus the Cloudflare Access service-token headers when configured):
+The runner calls three endpoints, merged in city-hall by pull request [Lepid-Labs/city-hall#18](https://github.com/Lepid-Labs/city-hall/pull/18) (commit `90a06ec`, the runner endpoints claim/heartbeat/outcome). Their decision record (city-hall ADR 0002) is still proposed, pending Nazu's review on the proposal issue [Lepid-Labs/city-hall#17](https://github.com/Lepid-Labs/city-hall/issues/17); if that review changes the API, the runner follows. Bearer: the runner's usr credential; plus the Cloudflare Access service-token headers when configured:
 
 | Call | Answer |
 |---|---|
