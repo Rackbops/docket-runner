@@ -27,7 +27,7 @@ loop:  claim Job from city-hall  ->  claude -p (prompt on stdin, JSON out)  ->  
 
 ## The city-hall contract
 
-The runner expects three endpoints, which city-hall#2 implements (bearer: the runner's usr credential; plus the Cloudflare Access service-token headers when configured):
+The runner expects three endpoints, proposed to city-hall in [Lepid-Labs/city-hall#17](https://github.com/Lepid-Labs/city-hall/issues/17) and not yet agreed (bearer: the runner's usr credential; plus the Cloudflare Access service-token headers when configured):
 
 | Call | Answer |
 |---|---|
