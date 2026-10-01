@@ -2,14 +2,15 @@ import type { Config } from "./config.js"
 import { type Job, type JobResult, parseJob } from "./contract.js"
 
 /**
- * The execute-lane API the runner expects from city-hall (Lepid-Labs/city-hall#2 implements it):
+ * The execute-lane API the runner expects from city-hall, as proposed in Lepid-Labs/city-hall#17
+ * (not yet agreed; the runner follows whatever city-hall settles on):
  *
  *   POST /api/execute/claim                        -> 200 { job: Job } | 204 (nothing queued)
  *   POST /api/execute/jobs/:id/heartbeat { leaseToken } -> 204 | 409 (lease lost)
  *   POST /api/execute/jobs/:id/outcome { leaseToken, result: JobResult } -> 204 | 409 (lease lost)
  *
  * Every request carries the runner's usr-issued credential as a bearer token and, when
- * configured, the Cloudflare Access service-token pair for the tracker hostname. Outbound only:
+ * configured, the Cloudflare Access service-token pair for city-hall's hostname. Outbound only:
  * nothing on roshne's host listens for city-hall.
  */
 export class CityHallError extends Error {

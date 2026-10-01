@@ -20,7 +20,7 @@ export interface Config {
   cityHallUrl: string
   /** The usr-issued runner credential city-hall verifies (shape per city-hall#9); never logged. */
   cityHallRunnerToken: string
-  /** Cloudflare Access service token for the tracker hostname; both or neither. */
+  /** Cloudflare Access service token for city-hall's hostname; both or neither. */
   cfAccessClientId?: string
   cfAccessClientSecret?: string
   claudeTimeoutMs: number

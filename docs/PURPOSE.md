@@ -2,8 +2,10 @@
 
 ## Problem being solved
 
-The docket task tracker (Lepid-Labs/city-hall, on the Rackbops/docket library) needs a model for
-its agent-driven task types and its plain-language intake dialogue. roshne's rule is that every
+The docket task tracker (the tracker plugin in Rackbops/rackbops-bot-plugins, on the
+Rackbops/docket library) needs a model for its agent-driven task types. It submits that model
+work to Lepid-Labs/city-hall, which queues it and leases it to a runner. (A plain-language intake
+dialogue is deferred, plan item 31, and would run outside city-hall if it is taken up.) roshne's rule is that every
 model call runs on roshne's Claude subscription through the Claude Code CLI in print mode, never
 an API key, and that the subscription token never sits on a host roshne does not administer.
 city-hall runs on the Lepid-Labs edge, so the token cannot live there.
