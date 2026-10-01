@@ -11,7 +11,7 @@
 # layer; loadConfig refuses ANTHROPIC_API_KEY / ANTHROPIC_AUTH_TOKEN / ANTHROPIC_BASE_URL at boot and
 # buildSubprocessEnv strips them from every CLI call regardless.
 
-FROM node:24-bookworm-slim AS build
+FROM node:26-bookworm-slim AS build
 RUN npm install -g pnpm@12.8.1
 WORKDIR /app
 # pnpm-workspace.yaml is pnpm's settings file, not a workspace: it carries the minimum-release-age
@@ -23,7 +23,7 @@ COPY src ./src
 COPY scripts ./scripts
 RUN pnpm build
 
-FROM node:24-bookworm-slim
+FROM node:26-bookworm-slim
 # tini is PID 1: node registers no SIGTERM handler as PID 1 and would never reap a grandchild
 # orphaned by a claude subprocess; tini forwards the signal and reaps.
 RUN apt-get update \
