@@ -4,8 +4,11 @@ Runs Claude Code print-mode Jobs for the docket task tracker. A small service on
 that holds the **only** Claude credential the tracker has, claims Jobs from
 [Lepid-Labs/city-hall](https://github.com/Lepid-Labs/city-hall), runs `claude -p` exactly as the
 Job says, and posts the result back. It knows no task type: the types live in
-[Rackbops/docket](https://github.com/Rackbops/docket) and run inside city-hall; this process only
-executes the CLI call they describe.
+[Rackbops/docket](https://github.com/Rackbops/docket) and run in the tracker plugin
+([Rackbops/rackbops-bot-plugins](https://github.com/Rackbops/rackbops-bot-plugins) `plugins/tracker`),
+which hands each model Job to city-hall; city-hall only queues and leases it, and this process
+only executes the CLI call it describes. The execute-lane API it calls is proposed to city-hall in
+[Lepid-Labs/city-hall#17](https://github.com/Lepid-Labs/city-hall/issues/17).
 
 Design: Rackbops/Tooling, `research/city-hall-task-tracker.md`, section 5.12. Scaffold: [#1](https://github.com/Rackbops/docket-runner/issues/1).
 
@@ -24,7 +27,7 @@ loop:  claim Job from city-hall  ->  claude -p (prompt on stdin, JSON out)  ->  
 
 ## The city-hall contract
 
-The runner expects three endpoints, which city-hall#2 implements (bearer: the runner's usr credential; plus the Cloudflare Access service-token headers when configured):
+The runner expects three endpoints, proposed to city-hall in [Lepid-Labs/city-hall#17](https://github.com/Lepid-Labs/city-hall/issues/17) and not yet agreed (bearer: the runner's usr credential; plus the Cloudflare Access service-token headers when configured):
 
 | Call | Answer |
 |---|---|

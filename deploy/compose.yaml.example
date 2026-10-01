@@ -18,7 +18,7 @@ services:
     ports:
       - "127.0.0.1:${HEALTH_PORT:-8787}:${HEALTH_PORT:-8787}"
     volumes:
-      # The CLI's home: session files for resumed intake conversations (the transcripts the plan
+      # The CLI's home: session files for any Job that resumes a conversation (the transcripts the plan
       # says to keep under a retention rule) and the CLI's own state. Not the credential: that
       # arrives through app.env on every start.
       - claude-home:/home/node/.claude

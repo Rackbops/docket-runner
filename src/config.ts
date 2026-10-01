@@ -18,9 +18,9 @@ export interface Config {
   claudeBin: string
   /** city-hall's base URL, reached through the edge. */
   cityHallUrl: string
-  /** The usr-issued runner credential city-hall verifies (shape per city-hall#9); never logged. */
+  /** The usr-issued runner credential city-hall verifies (shape proposed on city-hall#2, still open: plan item 25); never logged. */
   cityHallRunnerToken: string
-  /** Cloudflare Access service token for the tracker hostname; both or neither. */
+  /** Cloudflare Access service token for city-hall's hostname; both or neither. */
   cfAccessClientId?: string
   cfAccessClientSecret?: string
   claudeTimeoutMs: number
