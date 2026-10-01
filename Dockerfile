@@ -12,7 +12,7 @@
 # buildSubprocessEnv strips them from every CLI call regardless.
 
 FROM node:24-bookworm-slim AS build
-RUN npm install -g pnpm@12.4.2
+RUN npm install -g pnpm@12.8.1
 WORKDIR /app
 # pnpm-workspace.yaml is pnpm's settings file, not a workspace: it carries the minimum-release-age
 # exemption for @rackbops/docket-core, and pnpm enforces that policy against the lockfile even
