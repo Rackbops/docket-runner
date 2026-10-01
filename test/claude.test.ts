@@ -1,4 +1,4 @@
-import { mkdtempSync, readFileSync } from "node:fs"
+import { existsSync, mkdtempSync, readFileSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { describe, expect, it } from "vitest"
@@ -21,9 +21,10 @@ async function run(
   for (const [k, v] of Object.entries(env)) process.env[k] = v
   try {
     const result = await runJob(j, config)
-    const argv = JSON.parse(
-      readFileSync(argvFile, "utf8").trim().split("\n")[0] ?? "[]",
-    ) as string[]
+    // A run killed early (the timeout case) can end before the fake CLI records its argv.
+    const argv = existsSync(argvFile)
+      ? (JSON.parse(readFileSync(argvFile, "utf8").trim().split("\n")[0] ?? "[]") as string[])
+      : []
     return { result, argv }
   } finally {
     delete process.env.FAKE_CLAUDE_MODE
