@@ -1,6 +1,3 @@
-import { mkdtempSync, readFileSync } from "node:fs"
-import { tmpdir } from "node:os"
-import { join } from "node:path"
 import { describe, expect, it } from "vitest"
 
 import { buildArgs, classify, runJob } from "../src/claude.js"
@@ -15,19 +12,14 @@ async function run(
   env: Record<string, string> = {},
 ) {
   const j = parseJob(job(overrides))
-  const argvFile = join(mkdtempSync(join(tmpdir(), "fake-claude-")), "argv.jsonl")
   process.env.FAKE_CLAUDE_MODE = mode
-  process.env.FAKE_CLAUDE_ARGV_FILE = argvFile
   for (const [k, v] of Object.entries(env)) process.env[k] = v
   try {
-    const result = await runJob(j, config)
-    const argv = JSON.parse(
-      readFileSync(argvFile, "utf8").trim().split("\n")[0] ?? "[]",
-    ) as string[]
-    return { result, argv }
+    // The flag set is asserted through buildArgs above; reading the fake CLI's argv here raced
+    // the timeout test's 50 ms kill, which can land before the child writes anything.
+    return { result: await runJob(j, config) }
   } finally {
     delete process.env.FAKE_CLAUDE_MODE
-    delete process.env.FAKE_CLAUDE_ARGV_FILE
     for (const k of Object.keys(env)) delete process.env[k]
   }
 }
