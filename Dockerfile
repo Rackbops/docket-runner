@@ -31,7 +31,7 @@ RUN apt-get update \
   && rm -rf /var/lib/apt/lists/*
 # The Claude CLI, pinned so a rebuild is reproducible and a CLI bump is a Renovate PR
 # (renovate.json's custom manager reads this line).
-RUN npm install -g @anthropic-ai/claude-code@2.1.283 && npm cache clean --force
+RUN npm install -g @anthropic-ai/claude-code@2.1.285 && npm cache clean --force
 WORKDIR /app
 COPY package.json ./
 COPY --from=build /app/dist ./dist
