@@ -10,12 +10,19 @@ import {
 } from "./contract.js"
 import { buildSubprocessEnv } from "./subprocess-env.js"
 
-/** What one CLI invocation came back with. Never rejects: a spawn failure is an exit of -1 with the error in stderr. */
+/**
+ * What one CLI invocation came back with. Never rejects: a spawn failure is an exit of -1 with
+ * the error in stderr.
+ */
 export interface Exec {
   exitCode: number
   stdout: string
   stderr: string
   timedOut: boolean
+  /**
+   * True when `signal` stopped the child (a lost lease); the output is then of no use to anyone.
+   */
+  aborted?: boolean
   durationMs: number
 }
 
@@ -25,34 +32,70 @@ export interface ExecOptions {
   stdin: string
   timeoutMs: number
   env: NodeJS.ProcessEnv
+  /** Aborting kills the child. The loop aborts when city-hall says the lease is gone. */
+  signal?: AbortSignal
+  /** How long a SIGTERM gets before SIGKILL follows. Default `KILL_GRACE_MS`; tests shorten it. */
+  killGraceMs?: number
 }
+
+/** How long a child stopped by timeout or abort has to exit on SIGTERM before it gets SIGKILL. */
+export const KILL_GRACE_MS = 5000
 
 export type Executor = (opts: ExecOptions) => Promise<Exec>
 
 /**
  * Spawns the CLI with the prompt on stdin (never argv: long prompts and Windows command-line
- * limits), captures both streams, kills on timeout. Lifted from research-triage's `runClaudeP`,
- * with the stdin error handling that keeps an EPIPE from taking the process down.
+ * limits), captures both streams, kills on timeout or when `signal` aborts. Lifted from
+ * research-triage's `runClaudeP`, with the stdin error handling that keeps an EPIPE from taking
+ * the process down.
  */
-export const realExecutor: Executor = ({ bin, args, stdin, timeoutMs, env }) =>
+export const realExecutor: Executor = ({
+  bin,
+  args,
+  stdin,
+  timeoutMs,
+  env,
+  signal,
+  killGraceMs = KILL_GRACE_MS,
+}) =>
   new Promise((resolve) => {
     const started = Date.now()
     let stdout = ""
     let stderr = ""
     let settled = false
     let timedOut = false
+    let aborted = false
+    let killTimer: NodeJS.Timeout | undefined
+    // SIGTERM first; a child that ignores it gets SIGKILL once the grace period is up. 'close'
+    // follows either and settles the promise there, so the output so far is kept.
+    const kill = () => {
+      if (killTimer || settled) return
+      child.kill("SIGTERM")
+      killTimer = setTimeout(() => {
+        if (!settled) child.kill("SIGKILL")
+      }, killGraceMs)
+    }
+    const onAbort = () => {
+      aborted = true
+      kill()
+    }
     const finish = (exitCode: number) => {
       if (settled) return
       settled = true
       clearTimeout(timer)
-      resolve({ exitCode, stdout, stderr, timedOut, durationMs: Date.now() - started })
+      clearTimeout(killTimer)
+      signal?.removeEventListener("abort", onAbort)
+      const exec: Exec = { exitCode, stdout, stderr, timedOut, durationMs: Date.now() - started }
+      if (aborted) exec.aborted = true
+      resolve(exec)
     }
     const child = spawn(bin, args, { env, stdio: ["pipe", "pipe", "pipe"] })
     const timer = setTimeout(() => {
       timedOut = true
-      child.kill()
-      // The 'close' event follows the kill; finish there so stdout so far is kept.
+      kill()
     }, timeoutMs)
+    if (signal?.aborted) onAbort()
+    else signal?.addEventListener("abort", onAbort, { once: true })
     child.stdout.on("data", (chunk: Buffer) => {
       stdout += chunk.toString("utf8")
     })
@@ -115,6 +158,31 @@ const LIMIT_RE = /hit your (session|weekly|\w+) limit/i
 const AUTH_RE = /not logged in|oauth|authenticat|invalid api key|api error: 401/i
 const RESET_RE = /resets? (?:at|in) ([^.]+)/i
 
+/** How much of the CLI's stdout or stderr a failure detail quotes. */
+export const EXCERPT_CHARS = 200
+/**
+ * Credential shapes scrubbed from a quoted excerpt: Anthropic keys and tokens, and a bearer
+ * followed by a token-length run (16+ non-space characters), so prose like "bearer of bad news"
+ * is left alone.
+ */
+const CREDENTIAL_RE = /sk-ant-[\w-]+|\bbearer\s+(?=\S{16,})\S+/gi
+
+/**
+ * A short, single-line quote of what the CLI wrote to stdout or stderr, so a failure detail says
+ * what happened instead of "(no output)". The first `max` characters, then a `... (N chars)`
+ * marker naming the full length; whitespace collapsed, non-printable and non-ASCII characters
+ * replaced, credential shapes redacted. The detail goes to city-hall, never to the log, so the
+ * no-prompt-above-debug rule is untouched.
+ */
+export function excerpt(s: string, max: number = EXCERPT_CHARS): string {
+  const flat = s
+    .replace(CREDENTIAL_RE, "[redacted]")
+    .replace(/\s+/g, " ")
+    .replace(/[^\x20-\x7e]/g, "?")
+    .trim()
+  return flat.length > max ? `${flat.slice(0, max)}... (${flat.length} chars)` : flat
+}
+
 /**
  * Turns a finished CLI call into a JobResult. Exit code and `is_error` are both read; neither is
  * trusted alone (the CLI exits 1 for every `is_error` envelope, including the diagnostic ones).
@@ -130,8 +198,11 @@ export function classify(job: Job, exec: Exec): JobResult {
   }
   if (exec.timedOut)
     return base("timeout", `claude -p exceeded ${job.timeoutMs ?? "the default"} ms and was killed`)
+  // Only the unit test sees this branch: the loop discards an aborted result without posting it.
+  if (exec.aborted) return base("error", "claude -p was stopped: the lease was lost")
 
-  const text = `${env?.result ?? ""}\n${exec.stderr}`.trim()
+  const stderr = excerpt(exec.stderr)
+  const text = `${env?.result ?? ""}\n${stderr}`.trim()
   const failed = exec.exitCode !== 0 || env?.is_error === true || env === null
   if (failed) {
     if (env?.api_error_status === 401 || AUTH_RE.test(text))
@@ -145,11 +216,15 @@ export function classify(job: Job, exec: Exec): JobResult {
     if (env?.subtype === "error_max_turns" || /max[_ ]turns/i.test(text))
       return base("turn_cap", text || "turn cap reached")
     if (/budget limit/i.test(text)) return base("budget_cap", text)
-    if (env === null)
+    if (env === null) {
+      const quoted = excerpt(exec.stdout)
+      const parts = [quoted && `stdout: ${quoted}`, stderr && `stderr: ${stderr}`]
+      const said = parts.filter(Boolean).join("; ")
       return base(
         "error",
-        `claude -p exited ${exec.exitCode} without a JSON envelope: ${text || "(no output)"}`,
+        `claude -p exited ${exec.exitCode} without a JSON envelope: ${said || "(no output)"}`,
       )
+    }
     return base("error", text || `claude -p exited ${exec.exitCode}`)
   }
 
@@ -174,13 +249,18 @@ export function classify(job: Job, exec: Exec): JobResult {
   return ok
 }
 
-/** Runs one Job through the CLI and classifies the outcome. The only place the CLI is invoked for work. */
+/**
+ * Runs one Job through the CLI and classifies the outcome. The only place the CLI is invoked for
+ * work.
+ */
 export async function runJob(
   job: Job,
   config: Config,
   execute: Executor = realExecutor,
+  signal?: AbortSignal,
 ): Promise<JobResult> {
   const exec = await execute({
+    ...(signal ? { signal } : {}),
     bin: config.claudeBin,
     args: buildArgs(job, config),
     stdin: job.prompt,

@@ -24,9 +24,15 @@ export interface Lease {
   heartbeatSeconds: number
 }
 
-/** A claimed Job: the core's spec plus the occurrence id (the outcome's idempotency key) and the lease. */
+/**
+ * A claimed Job: the core's spec plus city-hall's job id and the lease city-hall issued with
+ * it.
+ */
 export interface Job extends JobSpec {
-  /** The occurrence id: the idempotency key for the outcome. */
+  /**
+   * City-hall's job id (its `jobs` row, which the heartbeat and outcome URLs name), not the
+   * tracker's occurrence id. City-hall keys the outcome by it, with the lease token.
+   */
   id: string
   lease: Lease
 }

@@ -17,6 +17,8 @@ export interface LoopState {
   pauseReason: PauseReason | null
   jobsDone: number
   jobsFailed: number
+  /** Jobs stopped because city-hall took the lease back: nothing posted, not done or failed. */
+  jobsAbandoned: number
 }
 
 export interface LoopDeps {
@@ -60,6 +62,7 @@ export class Loop {
     pauseReason: null,
     jobsDone: 0,
     jobsFailed: 0,
+    jobsAbandoned: 0,
   }
   private stopped = false
   private readonly sleep: (ms: number) => Promise<void>
@@ -127,15 +130,20 @@ export class Loop {
     this.state.currentJobId = job.id
     log("info", "job claimed", { jobId: job.id, resume: Boolean(job.resumeSessionId) })
 
-    let leaseLost = false
+    // A lost lease means city-hall will not accept this run's outcome, so the CLI is stopped
+    // rather than left to spend subscription usage on a result nobody takes.
+    const lease = new AbortController()
+    // A heartbeat still in flight when the run ends must not touch state or abort a finished run.
+    let running = true
     const beat = setInterval(() => {
       client
         .heartbeat(job)
         .then((r) => {
+          if (!running) return
           this.state.lastHeartbeatAt = new Date(this.now()).toISOString()
-          if (r === "lost") {
-            leaseLost = true
-            log("warn", "lease lost during run", { jobId: job.id })
+          if (r === "lost" && !lease.signal.aborted) {
+            log("warn", "lease lost during run; stopping the CLI", { jobId: job.id })
+            lease.abort()
           }
         })
         .catch((err) =>
@@ -148,9 +156,23 @@ export class Loop {
 
     let result: JobResult
     try {
-      result = await runJob(job, config, this.deps.execute)
+      result = await runJob(job, config, this.deps.execute, lease.signal)
     } finally {
+      running = false
       clearInterval(beat)
+    }
+
+    if (lease.signal.aborted) {
+      // Nothing is posted, and the Job counts as abandoned, neither done nor failed: a 409 means
+      // city-hall has already taken the lease back (requeued the Job, or failed it after
+      // `maxExpiredLeases` expiries), so this run's work is not its to report.
+      this.state.jobsAbandoned += 1
+      this.state.currentJobId = null
+      log("warn", "job abandoned: lease lost; CLI stopped, no outcome posted", {
+        jobId: job.id,
+        durationMs: result.durationMs,
+      })
+      return
     }
 
     if (result.kind === "success") this.state.jobsDone += 1
@@ -162,22 +184,20 @@ export class Loop {
       costUsd: result.totalCostUsd ?? null,
     })
 
-    if (!leaseLost) {
-      for (let attempt = 1; attempt <= 3; attempt += 1) {
-        try {
-          const r = await client.outcome(job, result)
-          this.state.lastOutcomeAt = new Date(this.now()).toISOString()
-          if (r === "lost")
-            log("warn", "outcome refused: lease lost; city-hall requeues", { jobId: job.id })
-          break
-        } catch (err) {
-          log("warn", "outcome post failed", {
-            jobId: job.id,
-            attempt,
-            error: err instanceof Error ? err.message : String(err),
-          })
-          if (attempt < 3) await this.sleep(config.pollIntervalMs * attempt)
-        }
+    for (let attempt = 1; attempt <= 3; attempt += 1) {
+      try {
+        const r = await client.outcome(job, result)
+        this.state.lastOutcomeAt = new Date(this.now()).toISOString()
+        if (r === "lost")
+          log("warn", "outcome refused: lease lost; city-hall requeues", { jobId: job.id })
+        break
+      } catch (err) {
+        log("warn", "outcome post failed", {
+          jobId: job.id,
+          attempt,
+          error: err instanceof Error ? err.message : String(err),
+        })
+        if (attempt < 3) await this.sleep(config.pollIntervalMs * attempt)
       }
     }
     this.state.currentJobId = null

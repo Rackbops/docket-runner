@@ -12,15 +12,33 @@ build) and its tests use `node --test`.
 
 `test/fixtures/fake-claude.mjs` is executable and answers like `claude -p --output-format json`
 would, by `FAKE_CLAUDE_MODE`: `success`, `schema`, `auth401`, `limit`, `max_turns`, `budget`,
-`slow` (`FAKE_CLAUDE_DELAY_MS`), `crash`, `garbage`. It records its argv to
-`FAKE_CLAUDE_ARGV_FILE` so the flag set is asserted, and it reads stdin so a prompt on argv would
-be caught. Tests hand `claudeBin` the fixture's path through `testConfig()`.
+`slow` (`FAKE_CLAUDE_DELAY_MS`), `crash`, `garbage`, and `stubborn` (ignores SIGTERM and never
+answers, for the SIGKILL fallback). It records its argv to `FAKE_CLAUDE_ARGV_FILE` so the flag
+set is asserted, and its pid to `FAKE_CLAUDE_PID_FILE` so a test can check the process is gone;
+it reads stdin so a prompt on argv would be caught. Tests hand `claudeBin` the fixture's path
+through `testConfig()`.
 
 ## The fake city-hall
 
 `test/loop.test.ts` starts an in-process `node:http` server that hands out queued Jobs once each
 and records heartbeats and outcomes; the lease heartbeat is 50 ms and the slow fake takes 300 ms,
-so a heartbeat is observed without slowing the suite.
+so a heartbeat is observed without slowing the suite. `loseLease` is a predicate: a heartbeat
+answers 409 while it returns true. The lost-lease test answers 204 until the fake CLI has written
+its pid file and 409 after, because on a busy machine the first 50 ms heartbeat can land before
+the child is up; it runs the slow fake for 30 s and asserts the loop kills it within a few
+seconds, posts nothing and counts it in `jobsAbandoned`.
+
+## A lost lease stops the CLI
+
+When a heartbeat comes back 409, the loop aborts an `AbortController` whose signal `runJob` hands
+the executor, which kills the child through the same `kill()` the timeout uses: SIGTERM, then
+SIGKILL if 'close' has not fired within `KILL_GRACE_MS` (5 s; `ExecOptions.killGraceMs` overrides
+it, which the tests use). The Job is then abandoned: no outcome is posted and it counts in
+`jobsAbandoned` (in the loop state `/readyz` reports), neither done nor failed. A 409 means
+city-hall has already taken the lease back -- requeued the Job, or failed it after
+`maxExpiredLeases` expiries (Lepid-Labs/city-hall `src/server/lib/jobs.ts:128-130,175-183` at
+90a06ec). A heartbeat still in flight when the run ends is ignored. Before this, the CLI ran to
+the end and spent subscription usage on a result city-hall would refuse.
 
 ## Classification facts
 
@@ -28,7 +46,11 @@ so a heartbeat is observed without slowing the suite.
 envelope. `api_error_status: 401` or "OAuth"/"authenticate"/"Not logged in" text is
 `auth_failed`; "You've hit your ... limit" is `usage_limit` and a "Resets at <time>" tail is kept
 as `resetsAt`; `subtype: error_max_turns` is `turn_cap`; "Budget limit" is `budget_cap`; no
-JSON envelope at all is `error`. A Job with a schema and no `structured_output` (and a `result`
+JSON envelope at all is `error`, and its detail quotes stdout and stderr through `excerpt()`, so
+it says what came back instead of "(no output)". `excerpt()` keeps the first 200 characters, then
+a `... (N chars)` marker naming the full length; it is one line, ASCII, with `sk-ant-` shapes and
+a bearer followed by a 16+ character token redacted. Stderr goes through it in every detail, the
+auth, limit and cap branches too. A Job with a schema and no `structured_output` (and a `result`
 that is not JSON) is `schema_miss`. Sources: code.claude.com/docs (headless, cli-reference,
 errors) and research-triage's `claudeAuth.ts` evidence, both as of 2026-09-26.
 

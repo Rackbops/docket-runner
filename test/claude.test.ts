@@ -1,8 +1,19 @@
+import { existsSync, mkdtempSync, readFileSync } from "node:fs"
+import { tmpdir } from "node:os"
+import { join } from "node:path"
 import { describe, expect, it } from "vitest"
 
-import { buildArgs, classify, runJob } from "../src/claude.js"
+import {
+  buildArgs,
+  classify,
+  EXCERPT_CHARS,
+  type Exec,
+  excerpt,
+  realExecutor,
+  runJob,
+} from "../src/claude.js"
 import { parseJob } from "../src/contract.js"
-import { job, testConfig } from "./helpers.js"
+import { FAKE_CLAUDE, job, testConfig } from "./helpers.js"
 
 const config = testConfig()
 
@@ -111,7 +122,12 @@ describe("runJob against the fake CLI", () => {
     const crash = (await run("crash")).result
     expect(crash.kind).toBe("error")
     if (crash.kind === "error") expect(crash.detail).toContain("boom")
-    expect((await run("garbage")).result.kind).toBe("error")
+    const garbage = (await run("garbage")).result
+    expect(garbage.kind).toBe("error")
+    if (garbage.kind === "error") {
+      expect(garbage.detail).toContain("stdout: not json at all")
+      expect(garbage.detail).not.toContain("(no output)")
+    }
   })
 
   it("kills a run that exceeds the Job's timeout", async () => {
@@ -130,5 +146,131 @@ describe("classify", () => {
       durationMs: 1,
     })
     expect(r.kind).toBe("schema_miss")
+  })
+})
+
+describe("excerpt", () => {
+  it("is one bounded ASCII line with credential shapes redacted", () => {
+    const auth = "Authorization: Bearer abc.def-123456789xyz sk-ant-oat01-SECRET_x"
+    const quoted = excerpt(`oops\n\t${auth} \u2014 ${"x".repeat(500)}`)
+    expect(quoted).not.toContain("abc.def-123456789xyz")
+    expect(quoted).not.toContain("SECRET")
+    expect(quoted).toContain("[redacted]")
+    expect(quoted).toMatch(
+      /^oops Authorization: \[redacted\] \[redacted\] \? x+\.\.\. \(\d+ chars\)$/,
+    )
+    expect(quoted.length).toBeLessThan(EXCERPT_CHARS + 30)
+  })
+
+  it("leaves prose with the word bearer alone", () => {
+    expect(excerpt("the bearer of bad news")).toBe("the bearer of bad news")
+    expect(excerpt("Bearer short")).toBe("Bearer short")
+  })
+
+  it("is empty for empty output, so the detail still says (no output)", () => {
+    expect(excerpt(" \n ")).toBe("")
+    const r = classify(parseJob(job()), {
+      exitCode: 2,
+      stdout: "",
+      stderr: "",
+      timedOut: false,
+      durationMs: 1,
+    })
+    expect(r.kind === "error" && r.detail).toContain("(no output)")
+  })
+})
+
+describe("stderr in a failure detail", () => {
+  const exec = (over: Partial<Exec>): Exec => ({
+    exitCode: 1,
+    stdout: "",
+    stderr: "",
+    timedOut: false,
+    durationMs: 1,
+    ...over,
+  })
+  const secret = "sk-ant-oat01-SECRETSECRET"
+  const bearer = "Bearer eyJhbGciOiJIUzI1NiJ9.payload"
+
+  it("is scrubbed when there is no JSON envelope", () => {
+    const r = classify(
+      parseJob(job()),
+      exec({ stdout: "nope", stderr: `crashed\n${secret} ${bearer} ${"y".repeat(400)}` }),
+    )
+    expect(r.kind).toBe("error")
+    const detail = r.kind === "error" ? r.detail : ""
+    expect(detail).toContain("stderr: crashed [redacted] [redacted] y")
+    expect(detail).not.toContain("SECRET")
+    expect(detail).not.toContain("eyJhbGci")
+    expect(detail).toMatch(/\.\.\. \(\d+ chars\)$/)
+  })
+
+  it("is scrubbed in the auth_failed and usage_limit details", () => {
+    const auth = classify(
+      parseJob(job()),
+      exec({ stderr: `Not logged in; token ${secret}\n${bearer}` }),
+    )
+    expect(auth.kind).toBe("auth_failed")
+    expect(auth.kind === "auth_failed" && auth.detail).toBe(
+      "Not logged in; token [redacted] [redacted]",
+    )
+    const limit = classify(
+      parseJob(job()),
+      exec({ stderr: `You've hit your weekly limit (${secret}). Resets at 3pm.` }),
+    )
+    expect(limit.kind).toBe("usage_limit")
+    if (limit.kind === "usage_limit") {
+      expect(limit.detail).not.toContain("SECRET")
+      expect(limit.resetsAt).toBe("3pm")
+    }
+  })
+})
+
+describe("aborting a run", () => {
+  it("kills the CLI when the signal aborts and classifies it as stopped", async () => {
+    const controller = new AbortController()
+    process.env.FAKE_CLAUDE_MODE = "slow"
+    process.env.FAKE_CLAUDE_DELAY_MS = "30000"
+    try {
+      const started = Date.now()
+      setTimeout(() => controller.abort(), 100)
+      const r = await runJob(parseJob(job()), config, undefined, controller.signal)
+      expect(Date.now() - started).toBeLessThan(3000)
+      expect(r.kind).toBe("error")
+      if (r.kind === "error") expect(r.detail).toContain("lease was lost")
+    } finally {
+      delete process.env.FAKE_CLAUDE_MODE
+      delete process.env.FAKE_CLAUDE_DELAY_MS
+    }
+  })
+})
+
+describe("the kill fallback", () => {
+  it("sends SIGKILL when the CLI ignores SIGTERM, so the run still settles", async () => {
+    const pidFile = join(mkdtempSync(join(tmpdir(), "runner-kill-")), "pid")
+    const controller = new AbortController()
+    const started = Date.now()
+    const running = realExecutor({
+      bin: FAKE_CLAUDE,
+      args: ["-p"],
+      stdin: "hang",
+      timeoutMs: 60_000,
+      env: { ...process.env, FAKE_CLAUDE_MODE: "stubborn", FAKE_CLAUDE_PID_FILE: pidFile },
+      signal: controller.signal,
+      killGraceMs: 200,
+    })
+    // Abort only once the child is up and ignoring SIGTERM. The file can exist before its content
+    // lands, and a pid of 0 would make the liveness check below probe the whole process group.
+    const readPid = () => (existsSync(pidFile) ? Number(readFileSync(pidFile, "utf8")) : 0)
+    while (readPid() <= 0 && Date.now() - started < 5000) {
+      await new Promise((r) => setTimeout(r, 10))
+    }
+    const pid = readPid()
+    expect(pid).toBeGreaterThan(0)
+    controller.abort()
+    const exec = await running
+    expect(exec.aborted).toBe(true)
+    expect(Date.now() - started).toBeLessThan(5000)
+    expect(() => process.kill(pid, 0)).toThrow()
   })
 })

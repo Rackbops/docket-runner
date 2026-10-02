@@ -1,4 +1,7 @@
+import { existsSync, mkdtempSync, readFileSync } from "node:fs"
 import { createServer, type Server } from "node:http"
+import { tmpdir } from "node:os"
+import { join } from "node:path"
 import { afterEach, describe, expect, it } from "vitest"
 
 import { makeCityHallClient } from "../src/cityhall.js"
@@ -12,7 +15,7 @@ interface Recorded {
 }
 
 /** A fake city-hall: hands out the queued Jobs once each, records heartbeats and outcomes. */
-function fakeCityHall(queue: unknown[], opts: { loseLease?: boolean } = {}) {
+function fakeCityHall(queue: unknown[], opts: { loseLease?: () => boolean } = {}) {
   const rec: Recorded = { claims: 0, heartbeats: [], outcomes: [] }
   const server = createServer((req, res) => {
     let body = ""
@@ -44,7 +47,7 @@ function fakeCityHall(queue: unknown[], opts: { loseLease?: boolean } = {}) {
       }
       if (m[2] === "heartbeat") {
         rec.heartbeats.push(decodeURIComponent(m[1] ?? ""))
-        res.writeHead(opts.loseLease ? 409 : 204).end()
+        res.writeHead(opts.loseLease?.() ? 409 : 204).end()
         return
       }
       rec.outcomes.push({ id: decodeURIComponent(m[1] ?? ""), body: JSON.parse(body) })
@@ -73,7 +76,17 @@ afterEach(() => {
   servers = []
   delete process.env.FAKE_CLAUDE_MODE
   delete process.env.FAKE_CLAUDE_DELAY_MS
+  delete process.env.FAKE_CLAUDE_PID_FILE
 })
+
+function alive(pid: number): boolean {
+  try {
+    process.kill(pid, 0)
+    return true
+  } catch {
+    return false
+  }
+}
 
 async function runLoopUntil(loop: Loop, done: () => boolean, ms = 4000): Promise<void> {
   const running = loop.run()
@@ -108,16 +121,34 @@ describe("the claim loop against a fake city-hall", () => {
     expect(loop.state.lastOutcomeAt).not.toBeNull()
   })
 
-  it("does not post an outcome once the lease was lost mid-run", async () => {
+  it("kills the CLI as soon as the lease is lost, and posts nothing", async () => {
     process.env.FAKE_CLAUDE_MODE = "slow"
-    process.env.FAKE_CLAUDE_DELAY_MS = "300"
-    const { server, rec } = fakeCityHall([job()], { loseLease: true })
+    process.env.FAKE_CLAUDE_DELAY_MS = "30000"
+    const pidFile = join(mkdtempSync(join(tmpdir(), "runner-lease-")), "pid")
+    process.env.FAKE_CLAUDE_PID_FILE = pidFile
+    // 204 until the fake CLI has written its pid file, then 409: a busy machine can take longer
+    // than the first 50 ms heartbeat to start the child, and the test needs the pid to check it.
+    const { server, rec } = fakeCityHall([job()], { loseLease: () => existsSync(pidFile) })
     servers.push(server)
-    const config = testConfig({ cityHallUrl: await listen(server) })
+    const config = testConfig({ cityHallUrl: await listen(server), claudeTimeoutMs: 60_000 })
     const loop = new Loop({ config, client: makeCityHallClient(config), log })
-    await runLoopUntil(loop, () => rec.claims >= 3)
+    logs.length = 0
+    const started = Date.now()
+    await runLoopUntil(loop, () => logs.some((l) => l.includes("job abandoned")))
+    const elapsed = Date.now() - started
+
+    // A 30 s run that the first 409 cut short, well inside the loop's own budget.
+    expect(logs.some((l) => l.includes("job abandoned"))).toBe(true)
+    expect(elapsed).toBeLessThan(3000)
+    expect(existsSync(pidFile)).toBe(true)
+    expect(alive(Number(readFileSync(pidFile, "utf8")))).toBe(false)
     expect(rec.heartbeats.length).toBeGreaterThanOrEqual(1)
     expect(rec.outcomes).toHaveLength(0)
+    expect(logs.filter((l) => l.includes("lease lost during run"))).toHaveLength(1)
+    expect(loop.state.currentJobId).toBeNull()
+    expect(loop.state.jobsFailed).toBe(0)
+    expect(loop.state.jobsDone).toBe(0)
+    expect(loop.state.jobsAbandoned).toBe(1)
   })
 
   it("pauses claiming after an auth failure and reports it in state", async () => {

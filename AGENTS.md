@@ -41,7 +41,7 @@ an `ANTHROPIC_*` variable, an SDK dependency, or a `--bare` flag (it never reads
   and its usr-issued credential. Nothing listens except the health endpoint, published on host
   loopback.
 - **It never retries a Job.** A failure is classified and posted; city-hall decides. A lost
-  lease means the outcome is not posted at all.
+  lease means the outcome is not posted at all and the CLI is stopped.
 
 ## Ground truth
 
