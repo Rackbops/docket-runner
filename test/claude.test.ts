@@ -104,6 +104,21 @@ describe("runJob against the fake CLI", () => {
     if (result.kind === "success") expect(result.structuredOutput).toEqual({ answer: 42 })
   })
 
+  it("passes the fake's research answer through as structured output (the e2e's happy path)", async () => {
+    const { result } = await run("research", { jsonSchema: { type: "object" } })
+    expect(result.kind).toBe("success")
+    if (result.kind !== "success") return
+    const answer = result.structuredOutput as {
+      summary: string
+      findings: { claim: string; sources: string[] }[]
+      uncertain: string[]
+    }
+    expect(answer.summary.length).toBeGreaterThan(0)
+    expect(answer.findings[0]?.sources[0]).toMatch(/^https:\/\//)
+    expect(Array.isArray(answer.uncertain)).toBe(true)
+    expect(JSON.parse(result.result)).toEqual(answer)
+  })
+
   it("classifies a 401 as auth_failed", async () => {
     const { result } = await run("auth401")
     expect(result.kind).toBe("auth_failed")
