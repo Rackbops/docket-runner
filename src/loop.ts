@@ -17,6 +17,8 @@ export interface LoopState {
   pauseReason: PauseReason | null
   jobsDone: number
   jobsFailed: number
+  /** Jobs stopped because city-hall took the lease back: nothing posted, not done or failed. */
+  jobsAbandoned: number
 }
 
 export interface LoopDeps {
@@ -60,6 +62,7 @@ export class Loop {
     pauseReason: null,
     jobsDone: 0,
     jobsFailed: 0,
+    jobsAbandoned: 0,
   }
   private stopped = false
   private readonly sleep: (ms: number) => Promise<void>
@@ -130,10 +133,13 @@ export class Loop {
     // A lost lease means city-hall will not accept this run's outcome, so the CLI is stopped
     // rather than left to spend subscription usage on a result nobody takes.
     const lease = new AbortController()
+    // A heartbeat still in flight when the run ends must not touch state or abort a finished run.
+    let running = true
     const beat = setInterval(() => {
       client
         .heartbeat(job)
         .then((r) => {
+          if (!running) return
           this.state.lastHeartbeatAt = new Date(this.now()).toISOString()
           if (r === "lost" && !lease.signal.aborted) {
             log("warn", "lease lost during run; stopping the CLI", { jobId: job.id })
@@ -152,12 +158,15 @@ export class Loop {
     try {
       result = await runJob(job, config, this.deps.execute, lease.signal)
     } finally {
+      running = false
       clearInterval(beat)
     }
 
     if (lease.signal.aborted) {
-      // Nothing is posted and nothing is counted: city-hall requeues the Job, and it is not a
-      // failure of this run's work.
+      // Nothing is posted, and the Job counts as abandoned, neither done nor failed: a 409 means
+      // city-hall has already taken the lease back (requeued the Job, or failed it after
+      // `maxExpiredLeases` expiries), so this run's work is not its to report.
+      this.state.jobsAbandoned += 1
       this.state.currentJobId = null
       log("warn", "job abandoned: lease lost; CLI stopped, no outcome posted", {
         jobId: job.id,

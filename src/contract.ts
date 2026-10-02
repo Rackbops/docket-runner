@@ -24,7 +24,10 @@ export interface Lease {
   heartbeatSeconds: number
 }
 
-/** A claimed Job: the core's spec plus city-hall's job id and the lease city-hall issued with it. */
+/**
+ * A claimed Job: the core's spec plus city-hall's job id and the lease city-hall issued with
+ * it.
+ */
 export interface Job extends JobSpec {
   /**
    * City-hall's job id (its `jobs` row, which the heartbeat and outcome URLs name), not the

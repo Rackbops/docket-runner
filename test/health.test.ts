@@ -24,6 +24,7 @@ function state(running: boolean): LoopState {
     pauseReason: null,
     jobsDone: 0,
     jobsFailed: 0,
+    jobsAbandoned: 0,
   }
 }
 
