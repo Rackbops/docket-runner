@@ -71,7 +71,7 @@ seconds.
 Pins: `test/e2e/pins.env` holds both SHAs, and the script refuses a checkout at any other commit
 unless `E2E_ALLOW_UNPINNED=1`, and one with uncommitted changes always. To bump one, run
 `just e2e` against the new commit with `E2E_ALLOW_UNPINNED=1`, fix what it finds, then change the
-SHA in `pins.env` in the same PR (and the clone commands above).
+full 40-character SHA in `pins.env` in the same PR (and the clone commands above).
 
 What it does not prove: the real CLI, the subscription credential, the edge (Cloudflare Access;
 the tracker's own config parser refuses `http://`, so the driver builds the config itself), or the
@@ -84,31 +84,55 @@ checks the three repos out side by side (`docket-runner/`, `city-hall/`, `bot-pl
 nested, or city-hall's `pnpm install` would find this repo's `pnpm-workspace.yaml` above it), at
 the SHAs it loads from `test/e2e/pins.env` into `$GITHUB_ENV`, sets up just, pnpm, Node 26 and
 Bun (the version in the plugins checkout's `package.json`), and runs `just install` and
-`just e2e`. On failure the logs (`$E2E_OUT`) are uploaded as the `e2e-logs` artifact.
+`just e2e`. It times out after 20 minutes. The third-party actions it uses (setup-just, pnpm,
+setup-bun) are pinned to full commit SHAs, with the tag in a comment.
+
+On failure the logs (`$E2E_OUT`) are uploaded as the `e2e-logs` artifact, kept for 3 days. This
+repo is public, so the artifact is too, and city-hall output is left out: its build log, its
+server logs, its databases, and the job reads and job ids (`*.job.json`, `*.id`). What is kept is
+this runner's logs, the tracker driver's output and the plugins install log.
 
 Lepid-Labs/city-hall is private. The job reads it with the repo secret `CITY_HALL_READ_TOKEN`: a
 fine-grained PAT whose resource owner is Lepid-Labs, scoped to city-hall only, Contents read-only.
-It is used for the access probe and the city-hall checkout (with `persist-credentials: false`),
-and never reaches `run.sh`. Lepid-Labs requires its owner to approve a fine-grained token before
-it can read anything.
+It is used for the access probe and the city-hall checkout (with `persist-credentials: false`).
+It is not in `run.sh`'s environment, but any code in the job (including the three dependency
+trees) could still read it from the runner. The exposure is accepted: it is a read-only Contents
+token for one repo, and fork and Dependabot PRs get no secrets. Renovate branches are same-repo,
+so they do get it. Lepid-Labs requires its owner to approve a fine-grained token before it can
+read anything.
 
-The job probes access first (`GET /repos/Lepid-Labs/city-hall` with the token). When the secret is
-empty (a fork PR) or the probe fails, the job emits a warning annotation, writes the same line to
-the job summary, skips every later step, and stays **green**. A green `e2e` check is therefore not
-proof the end-to-end check ran: look at the job's annotations or summary. The warning reads
+The job probes access first (`GET /repos/Lepid-Labs/city-hall` with the token, `curl --retry 3
+--retry-all-errors --max-time 20`). When the secret is empty or the probe answers 401, 403 or 404,
+the job emits a warning annotation, writes the same line to the job summary, skips every later
+step, and stays **green**. A green `e2e` check is therefore not proof the end-to-end check ran:
+look at the job's annotations or summary. The warning reads
 
-- `CITY_HALL_READ_TOKEN cannot read Lepid-Labs/city-hall yet (HTTP <code>; waiting on Lepid-Labs
-  owner approval of the token); end-to-end check skipped` -- not approved yet (GitHub answers 403
-  or 404);
-- `CITY_HALL_READ_TOKEN was refused (HTTP 401): expired or revoked; ...` -- renew the token;
-- `CITY_HALL_READ_TOKEN is not available to this run (a fork PR, or the secret is unset); ...`.
+- `CITY_HALL_READ_TOKEN cannot read Lepid-Labs/city-hall (HTTP <code>; most likely the Lepid-Labs
+  owner has not yet approved the token); end-to-end check skipped` -- not approved yet (GitHub
+  answers 403 or 404);
+- `CITY_HALL_READ_TOKEN was refused (HTTP 401): expired or revoked; renew it (the current token
+  expires 2026-12-31); end-to-end check skipped` -- renew the token;
+- `CITY_HALL_READ_TOKEN is not available to this run (e.g. a fork or Dependabot PR, or the secret
+  is unset); end-to-end check skipped`.
+
+Anything else is a network or GitHub blip, not a missing approval, and fails the job with an
+error annotation: no response at all after the retries (`000`), a 5xx, or any other code.
 
 This is deliberate: the job turns itself on at the first run after the token is approved, with no
-further PR. The token expires **2026-12-31**; renew it (same scope, owner approval again) and
-update the secret before then, or the job falls back to skipping with the 401 warning.
+further PR. The steps after the probe have not yet run in CI; once the token is approved, re-run
+the latest `ci` run on `main` to prove them before setting E2E_REQUIRED.
 
-To bump a pin in CI, change the SHA in `pins.env` (as above): the job reads it from there, so
-nothing in the workflow changes.
+Once the first real e2e run is green after approval, set the repo variable `E2E_REQUIRED=true`
+(Settings > Secrets and variables > Actions > Variables) so an expired or revoked token turns the
+job red instead of silently skipping. With it set, each of the three skips above is an error
+annotation (the same text, without "; end-to-end check skipped") and a red job.
+
+The token expires **2026-12-31**; renew it (same scope, owner approval again) and update the
+secret before then, or the job falls back to skipping with the 401 warning (or, with
+`E2E_REQUIRED=true`, goes red).
+
+To bump a pin in CI, change the full 40-character SHA in `pins.env` (as above): the job reads it
+from there, so nothing in the workflow changes.
 
 ## A lost lease stops the CLI
 
