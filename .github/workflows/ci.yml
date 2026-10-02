@@ -41,3 +41,100 @@ jobs:
           load: true
           tags: docket-runner:ci
       - run: docker run --rm --entrypoint claude docket-runner:ci --version
+
+  # The end-to-end check (`just e2e`, test/e2e/run.sh; CONTEXT.md, "The end-to-end check"): the
+  # tracker's executor -> a real city-hall -> this runner (fake CLI) -> back to the tracker.
+  #
+  # It needs Lepid-Labs/city-hall, which is private. CITY_HALL_READ_TOKEN is a fine-grained PAT
+  # (resource owner Lepid-Labs, city-hall only, Contents read-only) that Lepid-Labs' owner must
+  # approve before it can read anything. Until then, and on any run without the secret (a fork PR),
+  # the probe step fails soft: it emits a ::warning:: saying why, writes the skip to the job
+  # summary, and every later step is skipped, so the job stays green. This is deliberate: the
+  # job turns itself on the first run after the token is approved, with no further PR.
+  #
+  # The three repos are checked out side by side (docket-runner/, city-hall/, bot-plugins/), not
+  # nested: run.sh runs `pnpm install` in city-hall, and a city-hall inside this checkout would
+  # find this repo's pnpm-workspace.yaml above it.
+  e2e:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          path: docket-runner
+          persist-credentials: false
+      # The pins live only in test/e2e/pins.env; each becomes an env var for the checkouts below.
+      - name: Load the pins
+        run: grep -E '^[A-Z_]+=[0-9a-f]{40}$' docket-runner/test/e2e/pins.env >> "$GITHUB_ENV"
+      - name: Probe read access to Lepid-Labs/city-hall
+        id: probe
+        env:
+          TOKEN: ${{ secrets.CITY_HALL_READ_TOKEN }}
+        run: |
+          reason=
+          if [ -z "$TOKEN" ]; then
+            reason="CITY_HALL_READ_TOKEN is not available to this run (a fork PR, or the secret is unset)"
+          else
+            code=$(curl -sS -o /dev/null -w '%{http_code}' -H "Authorization: Bearer $TOKEN" \
+              https://api.github.com/repos/Lepid-Labs/city-hall) || code="no response"
+            if [ "$code" = 401 ]; then
+              reason="CITY_HALL_READ_TOKEN was refused (HTTP 401): expired or revoked; it must be renewed before 2026-12-31"
+            elif [ "$code" != 200 ]; then
+              reason="CITY_HALL_READ_TOKEN cannot read Lepid-Labs/city-hall yet (HTTP $code; waiting on Lepid-Labs owner approval of the token)"
+            fi
+          fi
+          if [ -n "$reason" ]; then
+            echo "::warning title=e2e skipped::$reason; end-to-end check skipped"
+            printf '### End-to-end check skipped\n\n%s; end-to-end check skipped.\n' "$reason" >> "$GITHUB_STEP_SUMMARY"
+            echo "ok=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "ok=true" >> "$GITHUB_OUTPUT"
+          fi
+      - if: steps.probe.outputs.ok == 'true'
+        uses: actions/checkout@v7
+        with:
+          repository: Lepid-Labs/city-hall
+          ref: ${{ env.CITY_HALL_PIN }}
+          token: ${{ secrets.CITY_HALL_READ_TOKEN }}
+          path: city-hall
+          persist-credentials: false
+      - if: steps.probe.outputs.ok == 'true'
+        uses: actions/checkout@v7
+        with:
+          repository: Rackbops/rackbops-bot-plugins
+          ref: ${{ env.BOT_PLUGINS_PIN }}
+          path: bot-plugins
+          persist-credentials: false
+      - if: steps.probe.outputs.ok == 'true'
+        uses: extractions/setup-just@v4
+      - if: steps.probe.outputs.ok == 'true'
+        uses: pnpm/action-setup@v6
+        with:
+          package_json_file: docket-runner/package.json
+      # Node 26 explicitly, not .nvmrc (24): the version the runner's image ships (Dockerfile).
+      - if: steps.probe.outputs.ok == 'true'
+        uses: actions/setup-node@v7
+        with:
+          node-version: 26
+          cache: pnpm
+          cache-dependency-path: docket-runner/pnpm-lock.yaml
+      - if: steps.probe.outputs.ok == 'true'
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version-file: bot-plugins/package.json
+      - if: steps.probe.outputs.ok == 'true'
+        working-directory: docket-runner
+        run: just install
+      # The token is not in this step's environment: run.sh only sees the two checkouts.
+      - if: steps.probe.outputs.ok == 'true'
+        working-directory: docket-runner
+        env:
+          CITY_HALL_DIR: ${{ github.workspace }}/city-hall
+          BOT_PLUGINS_DIR: ${{ github.workspace }}/bot-plugins
+          E2E_OUT: ${{ runner.temp }}/e2e-logs
+        run: just e2e
+      - if: failure() && steps.probe.outputs.ok == 'true'
+        uses: actions/upload-artifact@v7
+        with:
+          name: e2e-logs
+          path: ${{ runner.temp }}/e2e-logs
+          if-no-files-found: ignore

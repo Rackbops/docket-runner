@@ -29,7 +29,7 @@ test:
 
 # End-to-end check: the tracker's executor -> a local city-hall -> this runner (fake CLI) -> back.
 # Needs CITY_HALL_DIR and BOT_PLUGINS_DIR checkouts at the pins in test/e2e/pins.env, plus bun.
-# Not part of `check`, and no CI job yet (Lepid-Labs/city-hall is private); see CONTEXT.md.
+# Not part of `check`; CI's `e2e` job runs it once its city-hall token is approved (CONTEXT.md).
 e2e: build
     bash test/e2e/run.sh
 
