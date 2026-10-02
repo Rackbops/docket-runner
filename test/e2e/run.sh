@@ -13,10 +13,8 @@
 # builds this repo first. Logs go to $E2E_OUT (default: a new temp directory), kept and named on
 # failure.
 #
-# No CI job runs this yet: it needs read access to Lepid-Labs/city-hall, which is private. When
-# that is granted, the job is this repo's usual setup (just, pnpm, node, plus oven-sh/setup-bun),
-# two actions/checkout steps at the pins (`ref:` from pins.env, `path:` outside the workspace's
-# src/), and `just e2e` with CITY_HALL_DIR and BOT_PLUGINS_DIR set.
+# CI runs this in the `e2e` job of .github/workflows/ci.yml, which skips itself (green, with a
+# warning) while its token cannot read Lepid-Labs/city-hall; see CONTEXT.md.
 set -euo pipefail
 
 HERE=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
