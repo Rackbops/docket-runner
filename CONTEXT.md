@@ -11,13 +11,15 @@ build) and its tests use `node --test`.
 ## The fake CLI
 
 `test/fixtures/fake-claude.mjs` is executable and answers like `claude -p --output-format json`
-would, by `FAKE_CLAUDE_MODE`: `success`, `schema`, `research` (an answer in the tracker's research schema, for the
-end-to-end check), `auth401`, `limit`, `max_turns`, `budget`,
-`slow` (`FAKE_CLAUDE_DELAY_MS`), `crash`, `garbage`, and `stubborn` (ignores SIGTERM and never
-answers, for the SIGKILL fallback). It records its argv to `FAKE_CLAUDE_ARGV_FILE` so the flag
-set is asserted, and its pid to `FAKE_CLAUDE_PID_FILE` so a test can check the process is gone;
-it reads stdin so a prompt on argv would be caught. Tests hand `claudeBin` the fixture's path
-through `testConfig()`.
+would, by `FAKE_CLAUDE_MODE`: `success`, `schema`, `research` (an answer in the tracker's research
+schema, for the end-to-end check), `auth401`, `limit`, `max_turns`, `budget`, `slow`
+(`FAKE_CLAUDE_DELAY_MS`), `crash`, `garbage`, and `stubborn` (ignores SIGTERM and never answers,
+for the SIGKILL fallback). It records its argv to `FAKE_CLAUDE_ARGV_FILE` so the flag set is
+asserted, and its pid to `FAKE_CLAUDE_PID_FILE` so a test can check the process is gone; it reads
+stdin so a prompt on argv would be caught. The runner's auth probe (`src/probe.ts`'s exact argv,
+`ok` on stdin) is answered at once even in `slow` and `stubborn`, and writes no pid file, so a
+runner started in those modes is not held up for the delay. Tests hand `claudeBin` the fixture's
+path through `testConfig()`.
 
 ## The fake city-hall
 
@@ -33,8 +35,8 @@ seconds, posts nothing and counts it in `jobsAbandoned`.
 
 `just e2e` (`test/e2e/run.sh`, driving `test/e2e/drive-tracker.ts` under Bun) runs the tracker's
 model lane across three repos on 127.0.0.1: the tracker plugin's real city-hall executor
-(rackbops-bot-plugins `plugins/tracker/src/executor.ts`) submits research Jobs built by docket-types'
-`researchJob()` to a real city-hall (`node dist/server/index.js`, two runners tagged
+(rackbops-bot-plugins `plugins/tracker/src/executor.ts`) submits research Jobs built by
+docket-types' `researchJob()` to a real city-hall (`node dist/server/index.js`, two runners tagged
 `claude-cli:subscription` and one tagged `other-tag`), this runner's `dist/` claims them and runs
 the fake CLI, and the tracker reads the result back. Each scenario gets a fresh city-hall and is
 asserted on the tracker's answer, city-hall's view of the job, and the runner's log; the first
@@ -48,7 +50,7 @@ failure stops everything, exits non-zero and keeps the logs. It is not part of `
   claim 401; a runner without the capability tag never claims (and a tagged one then does);
 - lost lease (#17): runner A is frozen (SIGSTOP) past a 4 s lease, runner B finishes the Job, and
   on thawing A stops its CLI and posts nothing. Only the outcome is asserted: city-hall requeues an
-  expired lease at the next claim, not when it expires.
+  expired lease lazily, on the next claim, heartbeat or outcome call, not when it expires.
 
 Run it (Node >= 24, pnpm, bun, git, curl and pgrep on PATH; no ANTHROPIC_* variable, which the
 script unsets anyway):
@@ -67,18 +69,18 @@ builds this repo first. Logs go to `$E2E_OUT`, a new temp directory by default. 
 seconds.
 
 Pins: `test/e2e/pins.env` holds both SHAs, and the script refuses a checkout at any other commit
-unless `E2E_ALLOW_UNPINNED=1`. To bump one, run `just e2e` against the new commit with
-`E2E_ALLOW_UNPINNED=1`, fix what it finds, then change the SHA in `pins.env` in the same PR (and
-the clone commands above).
+unless `E2E_ALLOW_UNPINNED=1`, and one with uncommitted changes always. To bump one, run
+`just e2e` against the new commit with `E2E_ALLOW_UNPINNED=1`, fix what it finds, then change the
+SHA in `pins.env` in the same PR (and the clone commands above).
 
 What it does not prove: the real CLI, the subscription credential, the edge (Cloudflare Access;
 the tracker's own config parser refuses `http://`, so the driver builds the config itself), or the
 tracker inside a running bot. `/readyz` on roshne's host is still the only proof of the credential.
 
-There is no CI job yet: Lepid-Labs/city-hall is private (its GHCR image too), so a job here cannot
-check it out until this repo is given read access, which waits on a decision. The job would be
-this repo's usual setup plus `oven-sh/setup-bun`, two `actions/checkout` steps at the pins
-(`ref:` from `pins.env`), and `just e2e` with the two paths set.
+There is no CI job yet: Lepid-Labs/city-hall is private, so a job here cannot check it out until
+this repo is given read access, which waits on a decision. The job would be this repo's usual
+setup plus `oven-sh/setup-bun`, two `actions/checkout` steps at the pins (`ref:` from
+`pins.env`), and `just e2e` with the two paths set.
 
 ## A lost lease stops the CLI
 

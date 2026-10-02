@@ -6,9 +6,10 @@
 //   bun test/e2e/drive-tracker.ts <scenario> --expect pending|unavailable|result [options]
 //
 //   --kind K        with result: the JobResult's kind must be K
-//   --answer        with result success: docket-types' parseAnswer must accept structuredOutput
+//   --answer        with result success: docket-types' parseAnswer must accept structuredOutput,
+//                   with at least one finding
 //   --detail S      with pending or unavailable: an answer of that kind must say S
-//   --hold-ms N     with pending: every answer for N ms must be pending
+//   --hold-ms N     with pending: every answer for N ms must be pending (N <= --timeout-ms)
 //   --timeout-ms N  give up after N ms (default 20000)
 //   --key K         the source key to submit with (default $E2E_CITY_HALL_KEY)
 //   --id-file F     write city-hall's job id to F once the tracker has one on record
@@ -45,6 +46,11 @@ const wantAnswer = args.includes("--answer")
 const url = env("E2E_CITY_HALL_URL")
 const key = opt("--key") ?? env("E2E_CITY_HALL_KEY")
 const capability = env("E2E_CAPABILITY")
+// The loop stops at the timeout, so a hold longer than it would pass without holding at all.
+if (holdMs > 0 && timeoutMs < holdMs) {
+  console.error(`FAIL: --timeout-ms ${timeoutMs} is shorter than --hold-ms ${holdMs}`)
+  process.exit(1)
+}
 
 // docket-core and docket-types come from the plugins checkout, the copies the executor itself
 // imports: an error class from a second copy would fail every instanceof below.
@@ -114,8 +120,13 @@ function judge(a: Answer): string | null {
     const r = a.detail as { kind: string; structuredOutput?: unknown }
     if (resultKind !== undefined && r.kind !== resultKind)
       return `expected a ${resultKind} result, got ${r.kind}: ${JSON.stringify(r)}`
-    if (wantAnswer && types.parseAnswer(r.structuredOutput) === null)
-      return `parseAnswer refused the structured output: ${JSON.stringify(r.structuredOutput)}`
+    if (wantAnswer) {
+      const parsed = types.parseAnswer(r.structuredOutput) as { findings: unknown[] } | null
+      if (parsed === null)
+        return `parseAnswer refused the structured output: ${JSON.stringify(r.structuredOutput)}`
+      if (parsed.findings.length < 1)
+        return `parseAnswer kept no findings from: ${JSON.stringify(r.structuredOutput)}`
+    }
   } else if (detail !== undefined && !String(a.detail).includes(detail)) {
     return `expected the ${a.kind} answer to say "${detail}", got ${JSON.stringify(a.detail)}`
   }

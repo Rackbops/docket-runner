@@ -7,21 +7,22 @@
 #   CITY_HALL_DIR=<Lepid-Labs/city-hall checkout> BOT_PLUGINS_DIR=<rackbops-bot-plugins checkout> \
 #     just e2e
 #
-# Each checkout must be at its pin in test/e2e/pins.env (E2E_ALLOW_UNPINNED=1 runs anyway, with a
-# warning). Needs node >= 24, pnpm, bun and git on PATH. Installs and builds city-hall in its
-# checkout, installs the plugins checkout; `just e2e` builds this repo first. Logs go to
-# $E2E_OUT (default: a new temp directory), kept and named on failure.
+# Each checkout must be clean and at its pin in test/e2e/pins.env (E2E_ALLOW_UNPINNED=1 runs one
+# at another commit anyway, with a warning). Needs node >= 24, pnpm, bun, git, curl and pgrep on
+# PATH. Installs and builds city-hall in its checkout, installs the plugins checkout; `just e2e`
+# builds this repo first. Logs go to $E2E_OUT (default: a new temp directory), kept and named on
+# failure.
 #
-# No CI job runs this yet: it needs read access to Lepid-Labs/city-hall, which is private (and so
-# is its GHCR image). When that is granted, the job is this repo's usual setup (just, pnpm, node,
-# plus oven-sh/setup-bun), two actions/checkout steps at the pins (`ref:` from pins.env, `path:`
-# outside the workspace's src/), and `just e2e` with CITY_HALL_DIR and BOT_PLUGINS_DIR set.
+# No CI job runs this yet: it needs read access to Lepid-Labs/city-hall, which is private. When
+# that is granted, the job is this repo's usual setup (just, pnpm, node, plus oven-sh/setup-bun),
+# two actions/checkout steps at the pins (`ref:` from pins.env, `path:` outside the workspace's
+# src/), and `just e2e` with CITY_HALL_DIR and BOT_PLUGINS_DIR set.
 set -euo pipefail
 
 HERE=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 ROOT=$(cd "$HERE/../.." && pwd)
 FAKE="$ROOT/test/fixtures/fake-claude.mjs"
-# shellcheck source=pins.env
+# shellcheck source-path=SCRIPTDIR source=pins.env
 . "$HERE/pins.env"
 
 say() { printf 'e2e: %s\n' "$*"; }
@@ -42,11 +43,13 @@ check_checkout() { # $1 variable name, $2 pin
   head=$(git -C "$dir" rev-parse HEAD 2>/dev/null) || die "$name=$dir is not a git checkout"
   if [ "$head" != "$pin" ]; then
     if [ "${E2E_ALLOW_UNPINNED:-}" = "1" ]; then
-      say "WARNING: $name is at $head, not the pin $pin (E2E_ALLOW_UNPINNED=1)"
+      # stderr: stdout is this function's answer, the directory, read through $(...).
+      say "WARNING: $name is at $head, not the pin $pin (E2E_ALLOW_UNPINNED=1)" >&2
     else
       die "$name=$dir is at $head, not the pin $pin (test/e2e/pins.env); check out the pin, or set E2E_ALLOW_UNPINNED=1"
     fi
   fi
+  git -C "$dir" diff --quiet HEAD || die "$name=$dir has uncommitted changes"
   printf '%s' "$(cd "$dir" && pwd)"
 }
 CITY_HALL_DIR=$(check_checkout CITY_HALL_DIR "$CITY_HALL_PIN")
@@ -75,14 +78,19 @@ say "installing rackbops-bot-plugins"
 # --- process bookkeeping: everything started here is stopped on any exit --------------------------
 PIDS=()
 cleanup() {
-  local rc=$? p
+  local rc=$? p f
   for p in "${PIDS[@]}"; do
     kill -CONT "$p" 2>/dev/null || true
     kill "$p" 2>/dev/null || true
   done
-  # A fake CLI left by a runner stopped mid-run (the lost-lease one sleeps for a minute).
-  for p in "$OUT"/*.pid; do
-    [ -f "$p" ] && kill "$(cat "$p")" 2>/dev/null || true
+  # A fake CLI left by a runner stopped mid-run (the lost-lease one sleeps for a minute). Only a
+  # pid that is still the fake: a recycled one may by now belong to anything.
+  for f in "$OUT"/*.pid; do
+    [ -f "$f" ] || continue
+    p=$(cat "$f" 2>/dev/null) || continue
+    [[ "$p" =~ ^[1-9][0-9]*$ ]] || continue
+    grep -qaF fake-claude "/proc/$p/cmdline" 2>/dev/null || continue
+    kill "$p" 2>/dev/null || true
   done
   wait 2>/dev/null || true
   if [ "$rc" -ne 0 ]; then
@@ -125,12 +133,17 @@ start_city_hall() { # $1 scenario, $2 lease seconds
   die "$1: city-hall did not start"
 }
 
-stop() { # pid...
-  local p
+stop() { # pid...: stops each and drops it from PIDS, so cleanup never signals a reused pid
+  local p q keep
   for p in "$@"; do
     kill -CONT "$p" 2>/dev/null || true
     kill "$p" 2>/dev/null || true
     wait "$p" 2>/dev/null || true
+    keep=()
+    for q in "${PIDS[@]}"; do
+      [ "$q" = "$p" ] || keep+=("$q")
+    done
+    PIDS=("${keep[@]}")
   done
 }
 
@@ -234,6 +247,12 @@ if grep -qF '"job claimed"' "$OUT/wrong-tag.runner.log"; then
   die "wrong-tag: runner-x (tag other-tag) claimed a $CAPABILITY job"
 fi
 expect_job wrong-tag 'j.job.status==="queued" && j.job.attempts===0'
+# Not claiming must be runner-x polling and being told no, not runner-x having died or erred.
+kill -0 "$X_PID" 2>/dev/null ||
+  die "wrong-tag: runner-x exited during the hold: $(cat "$OUT/wrong-tag.runner.log")"
+if grep -qF '"level":"error"' "$OUT/wrong-tag.runner.log"; then
+  die "wrong-tag: runner-x logged an error: $(cat "$OUT/wrong-tag.runner.log")"
+fi
 stop "$X_PID"
 # The same job is claimable: a runner with the tag takes it, so the negative above is not vacuous.
 start_runner wrong-tag-drain "$TOKEN_A" research
@@ -248,8 +267,8 @@ pass "wrong capability tag: never claims (and a tagged runner then does)"
 # --- 5. lost lease (docket-runner#17) -------------------------------------------------------------
 # Runner A claims a slow Job and is frozen (SIGSTOP) past its 4 s lease; runner B takes the Job and
 # finishes it. When A thaws, its heartbeat is refused: it must stop its CLI and post nothing.
-# Only the outcome is asserted, not the job's status in between (city-hall requeues an expired
-# lease when a runner next claims, not when it expires).
+# Only the outcome is asserted, not the job's status in between: city-hall requeues an expired
+# lease lazily, on the next claim, heartbeat or outcome call, not when it expires.
 start_city_hall lease 4
 start_runner lease-a "$TOKEN_A" slow 60000
 A_PID=$RUNNER_PID
@@ -259,14 +278,14 @@ DRIVER_PID=$!
 PIDS+=("$DRIVER_PID")
 wait_log "$OUT/lease-a.runner.log" '"job claimed"' 20 || die "lease: runner A never claimed"
 # The Job's CLI, found by its --json-schema flag: the runner's start-up auth probe runs the same
-# fake (and writes the same pid file) without one.
+# fake without one (and the fake answers it at once, in every mode).
 A_CLI=
 for _ in $(seq 50); do
-  A_CLI=$(pgrep -P "$A_PID" -f -- '--json-schema' || true)
+  A_CLI=$(pgrep -P "$A_PID" -f -- '--json-schema' | head -n1 || true)
   [ -n "$A_CLI" ] && break
   sleep 0.1
 done
-[ -n "$A_CLI" ] || die "lease: runner A's CLI never started"
+[[ "$A_CLI" =~ ^[1-9][0-9]*$ ]] || die "lease: runner A's CLI never started (pgrep: '$A_CLI')"
 kill -STOP "$A_PID"
 sleep 6
 start_runner lease-b "$TOKEN_B" research
@@ -284,7 +303,8 @@ for _ in $(seq 100); do
   sleep 0.1
 done
 if kill -0 "$A_CLI" 2>/dev/null; then die "lease: runner A's CLI (pid $A_CLI) is still running"; fi
-if grep -qE '"(job finished|outcome refused|outcome post failed)"' "$OUT/lease-a.runner.log"; then
+if grep -qE '"msg":"(job finished|outcome refused[^"]*|outcome post failed)"' \
+  "$OUT/lease-a.runner.log"; then
   die "lease: runner A tried to post an outcome: $(cat "$OUT/lease-a.runner.log")"
 fi
 expect_job lease 'j.job.status==="done" && j.job.runner==="runner-b" && j.job.attempts===2'

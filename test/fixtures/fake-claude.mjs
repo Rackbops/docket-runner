@@ -7,6 +7,9 @@
 // the end-to-end check in test/e2e/.
 // It records its argv to FAKE_CLAUDE_ARGV_FILE when set, so tests can assert on the flag set, and
 // its pid to FAKE_CLAUDE_PID_FILE when set, so tests can check the process was killed.
+// The runner's auth probe (src/probe.ts: exactly `-p --output-format json --no-session-persistence`
+// with "ok" on stdin) is answered at once in every mode: `slow` and `stubborn` would otherwise hold
+// a starting runner for the whole delay. It writes no pid file, so it never hides a Job's pid.
 import { appendFileSync, writeFileSync } from "node:fs"
 
 const mode = process.env.FAKE_CLAUDE_MODE ?? "success"
@@ -15,12 +18,21 @@ const mode = process.env.FAKE_CLAUDE_MODE ?? "success"
 if (mode === "stubborn") process.on("SIGTERM", () => {})
 const argvFile = process.env.FAKE_CLAUDE_ARGV_FILE
 if (argvFile) appendFileSync(argvFile, `${JSON.stringify(process.argv.slice(2))}\n`)
+const PROBE_ARGS = ["-p", "--output-format", "json", "--no-session-persistence"]
+const probeArgs =
+  process.argv.length === PROBE_ARGS.length + 2 &&
+  PROBE_ARGS.every((a, i) => process.argv[i + 2] === a)
 const pidFile = process.env.FAKE_CLAUDE_PID_FILE
-if (pidFile) writeFileSync(pidFile, String(process.pid))
+if (pidFile && !probeArgs) writeFileSync(pidFile, String(process.pid))
 
 let prompt = ""
 process.stdin.setEncoding("utf8")
 for await (const chunk of process.stdin) prompt += chunk
+
+if (probeArgs && prompt === "ok" && (mode === "slow" || mode === "stubborn")) {
+  process.stdout.write(JSON.stringify({ result: "ok", session_id: "s-probe", num_turns: 1 }))
+  process.exit(0)
+}
 
 if (process.argv.includes("--version")) {
   process.stdout.write("9.9.9 (fake)\n")

@@ -1,0 +1,4 @@
+# Lets a plain `shellcheck test/e2e/run.sh` follow its `. pins.env` (found through the
+# script's source-path=SCRIPTDIR directive), as `shellcheck -x` would. external-sources can only
+# be enabled here, not in the script.
+external-sources=true
