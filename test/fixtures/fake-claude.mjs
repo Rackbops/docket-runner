@@ -1,8 +1,10 @@
 #!/usr/bin/env node
 // A stand-in for the Claude CLI so tests never touch the real one or the subscription. Reads the
 // prompt from stdin like the real `claude -p`, then answers according to FAKE_CLAUDE_MODE:
-//   success (default) | schema | auth401 | limit | max_turns | budget | slow | crash | garbage
-//   | stubborn (ignores SIGTERM and never answers, so only SIGKILL stops it)
+//   success (default) | schema | research | auth401 | limit | max_turns | budget | slow | crash
+//   | garbage | stubborn (ignores SIGTERM and never answers, so only SIGKILL stops it)
+// `research` answers in the tracker's research answer schema (docket-types `ANSWER_SCHEMA`), for
+// the end-to-end check in test/e2e/.
 // It records its argv to FAKE_CLAUDE_ARGV_FILE when set, so tests can assert on the flag set, and
 // its pid to FAKE_CLAUDE_PID_FILE when set, so tests can check the process was killed.
 import { appendFileSync, writeFileSync } from "node:fs"
@@ -54,6 +56,27 @@ switch (mode) {
       num_turns: 1,
     })
     break
+  case "research": {
+    const answer = {
+      summary: "A fake research answer from the e2e fixture; no model was called.",
+      findings: [
+        {
+          claim: "The fixture answered in the research schema.",
+          sources: ["https://example.com/docket-runner/e2e"],
+        },
+      ],
+      uncertain: ["Nothing here was looked up."],
+    }
+    out({
+      result: JSON.stringify(answer),
+      structured_output: answer,
+      session_id: "s-research",
+      total_cost_usd: 0.04,
+      usage: { input_tokens: 20, output_tokens: 40 },
+      num_turns: 3,
+    })
+    break
+  }
   case "auth401":
     out(
       {

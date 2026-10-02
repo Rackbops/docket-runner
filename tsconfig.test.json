@@ -4,5 +4,8 @@
     "rootDir": ".",
     "noEmit": true
   },
-  "include": ["src", "test"]
+  "include": ["src", "test"],
+  // test/e2e/drive-tracker.ts runs under Bun against another repo's checkout (bun:sqlite, Bun.*,
+  // modules resolved at run time), so Node's types cannot check it; `just e2e` exercises it.
+  "exclude": ["test/e2e"]
 }
