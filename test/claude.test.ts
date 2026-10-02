@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest"
 
-import { buildArgs, classify, runJob } from "../src/claude.js"
+import { buildArgs, classify, runJob, STDOUT_EXCERPT_CHARS, stdoutExcerpt } from "../src/claude.js"
 import { parseJob } from "../src/contract.js"
 import { job, testConfig } from "./helpers.js"
 
@@ -111,7 +111,12 @@ describe("runJob against the fake CLI", () => {
     const crash = (await run("crash")).result
     expect(crash.kind).toBe("error")
     if (crash.kind === "error") expect(crash.detail).toContain("boom")
-    expect((await run("garbage")).result.kind).toBe("error")
+    const garbage = (await run("garbage")).result
+    expect(garbage.kind).toBe("error")
+    if (garbage.kind === "error") {
+      expect(garbage.detail).toContain("stdout: not json at all")
+      expect(garbage.detail).not.toContain("(no output)")
+    }
   })
 
   it("kills a run that exceeds the Job's timeout", async () => {
@@ -130,5 +135,51 @@ describe("classify", () => {
       durationMs: 1,
     })
     expect(r.kind).toBe("schema_miss")
+  })
+})
+
+describe("stdoutExcerpt", () => {
+  it("is one bounded ASCII line with credential shapes redacted", () => {
+    const quoted = stdoutExcerpt(
+      `oops\n\tAuthorization: Bearer abc.def-123 sk-ant-oat01-SECRET_x \u2014 ${"x".repeat(500)}`,
+    )
+    expect(quoted).not.toContain("abc.def-123")
+    expect(quoted).not.toContain("SECRET")
+    expect(quoted).toContain("[redacted]")
+    expect(quoted).toMatch(
+      /^oops Authorization: \[redacted\] \[redacted\] \? x+\.\.\. \(\d+ chars\)$/,
+    )
+    expect(quoted.length).toBeLessThan(STDOUT_EXCERPT_CHARS + 30)
+  })
+
+  it("is empty for empty output, so the detail still says (no output)", () => {
+    expect(stdoutExcerpt(" \n ")).toBe("")
+    const r = classify(parseJob(job()), {
+      exitCode: 2,
+      stdout: "",
+      stderr: "",
+      timedOut: false,
+      durationMs: 1,
+    })
+    expect(r.kind === "error" && r.detail).toContain("(no output)")
+  })
+})
+
+describe("aborting a run", () => {
+  it("kills the CLI when the signal aborts and classifies it as stopped", async () => {
+    const controller = new AbortController()
+    process.env.FAKE_CLAUDE_MODE = "slow"
+    process.env.FAKE_CLAUDE_DELAY_MS = "30000"
+    try {
+      const started = Date.now()
+      setTimeout(() => controller.abort(), 100)
+      const r = await runJob(parseJob(job()), config, undefined, controller.signal)
+      expect(Date.now() - started).toBeLessThan(3000)
+      expect(r.kind).toBe("error")
+      if (r.kind === "error") expect(r.detail).toContain("lease was lost")
+    } finally {
+      delete process.env.FAKE_CLAUDE_MODE
+      delete process.env.FAKE_CLAUDE_DELAY_MS
+    }
   })
 })

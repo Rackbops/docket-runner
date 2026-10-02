@@ -16,6 +16,8 @@ export interface Exec {
   stdout: string
   stderr: string
   timedOut: boolean
+  /** True when `signal` stopped the child (a lost lease); the output is then of no use to anyone. */
+  aborted?: boolean
   durationMs: number
 }
 
@@ -25,27 +27,39 @@ export interface ExecOptions {
   stdin: string
   timeoutMs: number
   env: NodeJS.ProcessEnv
+  /** Aborting kills the child. The loop aborts when city-hall says the lease is gone. */
+  signal?: AbortSignal
 }
 
 export type Executor = (opts: ExecOptions) => Promise<Exec>
 
 /**
  * Spawns the CLI with the prompt on stdin (never argv: long prompts and Windows command-line
- * limits), captures both streams, kills on timeout. Lifted from research-triage's `runClaudeP`,
- * with the stdin error handling that keeps an EPIPE from taking the process down.
+ * limits), captures both streams, kills on timeout or when `signal` aborts. Lifted from
+ * research-triage's `runClaudeP`, with the stdin error handling that keeps an EPIPE from taking
+ * the process down.
  */
-export const realExecutor: Executor = ({ bin, args, stdin, timeoutMs, env }) =>
+export const realExecutor: Executor = ({ bin, args, stdin, timeoutMs, env, signal }) =>
   new Promise((resolve) => {
     const started = Date.now()
     let stdout = ""
     let stderr = ""
     let settled = false
     let timedOut = false
+    let aborted = false
+    const onAbort = () => {
+      aborted = true
+      child.kill()
+      // As with the timeout, 'close' follows the kill and settles the promise.
+    }
     const finish = (exitCode: number) => {
       if (settled) return
       settled = true
       clearTimeout(timer)
-      resolve({ exitCode, stdout, stderr, timedOut, durationMs: Date.now() - started })
+      signal?.removeEventListener("abort", onAbort)
+      const exec: Exec = { exitCode, stdout, stderr, timedOut, durationMs: Date.now() - started }
+      if (aborted) exec.aborted = true
+      resolve(exec)
     }
     const child = spawn(bin, args, { env, stdio: ["pipe", "pipe", "pipe"] })
     const timer = setTimeout(() => {
@@ -53,6 +67,8 @@ export const realExecutor: Executor = ({ bin, args, stdin, timeoutMs, env }) =>
       child.kill()
       // The 'close' event follows the kill; finish there so stdout so far is kept.
     }, timeoutMs)
+    if (signal?.aborted) onAbort()
+    else signal?.addEventListener("abort", onAbort, { once: true })
     child.stdout.on("data", (chunk: Buffer) => {
       stdout += chunk.toString("utf8")
     })
@@ -115,6 +131,28 @@ const LIMIT_RE = /hit your (session|weekly|\w+) limit/i
 const AUTH_RE = /not logged in|oauth|authenticat|invalid api key|api error: 401/i
 const RESET_RE = /resets? (?:at|in) ([^.]+)/i
 
+/** How much of a non-JSON stdout a failure detail quotes. */
+export const STDOUT_EXCERPT_CHARS = 200
+/** Credential shapes scrubbed from a quoted excerpt: Anthropic keys and tokens, bearer headers. */
+const CREDENTIAL_RE = /sk-ant-[\w-]+|bearer\s+[\w.~+/=-]+/gi
+
+/**
+ * A short, single-line quote of what the CLI wrote to stdout when it was not a JSON envelope, so a
+ * failure detail says what happened instead of "(no output)". Bounded, whitespace collapsed,
+ * non-printable and non-ASCII characters replaced, credential shapes redacted. The detail goes to
+ * city-hall, never to the log, so the no-prompt-above-debug rule is untouched.
+ */
+export function stdoutExcerpt(stdout: string): string {
+  const flat = stdout
+    .replace(CREDENTIAL_RE, "[redacted]")
+    .replace(/\s+/g, " ")
+    .replace(/[^\x20-\x7e]/g, "?")
+    .trim()
+  return flat.length > STDOUT_EXCERPT_CHARS
+    ? `${flat.slice(0, STDOUT_EXCERPT_CHARS)}... (${flat.length} chars)`
+    : flat
+}
+
 /**
  * Turns a finished CLI call into a JobResult. Exit code and `is_error` are both read; neither is
  * trusted alone (the CLI exits 1 for every `is_error` envelope, including the diagnostic ones).
@@ -130,6 +168,7 @@ export function classify(job: Job, exec: Exec): JobResult {
   }
   if (exec.timedOut)
     return base("timeout", `claude -p exceeded ${job.timeoutMs ?? "the default"} ms and was killed`)
+  if (exec.aborted) return base("error", "claude -p was stopped: the lease was lost")
 
   const text = `${env?.result ?? ""}\n${exec.stderr}`.trim()
   const failed = exec.exitCode !== 0 || env?.is_error === true || env === null
@@ -145,11 +184,18 @@ export function classify(job: Job, exec: Exec): JobResult {
     if (env?.subtype === "error_max_turns" || /max[_ ]turns/i.test(text))
       return base("turn_cap", text || "turn cap reached")
     if (/budget limit/i.test(text)) return base("budget_cap", text)
-    if (env === null)
+    if (env === null) {
+      const quoted = stdoutExcerpt(exec.stdout)
+      const parts = [
+        quoted && `stdout: ${quoted}`,
+        exec.stderr.trim() && `stderr: ${exec.stderr.trim()}`,
+      ]
+      const said = parts.filter(Boolean).join("; ")
       return base(
         "error",
-        `claude -p exited ${exec.exitCode} without a JSON envelope: ${text || "(no output)"}`,
+        `claude -p exited ${exec.exitCode} without a JSON envelope: ${said || "(no output)"}`,
       )
+    }
     return base("error", text || `claude -p exited ${exec.exitCode}`)
   }
 
@@ -179,8 +225,10 @@ export async function runJob(
   job: Job,
   config: Config,
   execute: Executor = realExecutor,
+  signal?: AbortSignal,
 ): Promise<JobResult> {
   const exec = await execute({
+    ...(signal ? { signal } : {}),
     bin: config.claudeBin,
     args: buildArgs(job, config),
     stdin: job.prompt,

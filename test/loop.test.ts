@@ -1,4 +1,7 @@
+import { existsSync, mkdtempSync, readFileSync } from "node:fs"
 import { createServer, type Server } from "node:http"
+import { tmpdir } from "node:os"
+import { join } from "node:path"
 import { afterEach, describe, expect, it } from "vitest"
 
 import { makeCityHallClient } from "../src/cityhall.js"
@@ -73,7 +76,17 @@ afterEach(() => {
   servers = []
   delete process.env.FAKE_CLAUDE_MODE
   delete process.env.FAKE_CLAUDE_DELAY_MS
+  delete process.env.FAKE_CLAUDE_PID_FILE
 })
+
+function alive(pid: number): boolean {
+  try {
+    process.kill(pid, 0)
+    return true
+  } catch {
+    return false
+  }
+}
 
 async function runLoopUntil(loop: Loop, done: () => boolean, ms = 4000): Promise<void> {
   const running = loop.run()
@@ -118,6 +131,32 @@ describe("the claim loop against a fake city-hall", () => {
     await runLoopUntil(loop, () => rec.claims >= 3)
     expect(rec.heartbeats.length).toBeGreaterThanOrEqual(1)
     expect(rec.outcomes).toHaveLength(0)
+  })
+
+  it("kills the CLI as soon as the lease is lost, and posts nothing", async () => {
+    process.env.FAKE_CLAUDE_MODE = "slow"
+    process.env.FAKE_CLAUDE_DELAY_MS = "30000"
+    const pidFile = join(mkdtempSync(join(tmpdir(), "runner-lease-")), "pid")
+    process.env.FAKE_CLAUDE_PID_FILE = pidFile
+    const { server, rec } = fakeCityHall([job()], { loseLease: true })
+    servers.push(server)
+    const config = testConfig({ cityHallUrl: await listen(server), claudeTimeoutMs: 60_000 })
+    const loop = new Loop({ config, client: makeCityHallClient(config), log })
+    logs.length = 0
+    const started = Date.now()
+    await runLoopUntil(loop, () => logs.some((l) => l.includes("job abandoned")))
+    const elapsed = Date.now() - started
+
+    // A 30 s run that the 50 ms heartbeat's first 409 cut short, well inside the loop's own budget.
+    expect(logs.some((l) => l.includes("job abandoned"))).toBe(true)
+    expect(elapsed).toBeLessThan(3000)
+    expect(existsSync(pidFile)).toBe(true)
+    expect(alive(Number(readFileSync(pidFile, "utf8")))).toBe(false)
+    expect(rec.heartbeats.length).toBeGreaterThanOrEqual(1)
+    expect(rec.outcomes).toHaveLength(0)
+    expect(logs.filter((l) => l.includes("lease lost during run"))).toHaveLength(1)
+    expect(loop.state.currentJobId).toBeNull()
+    expect(loop.state.jobsFailed).toBe(0)
   })
 
   it("pauses claiming after an auth failure and reports it in state", async () => {

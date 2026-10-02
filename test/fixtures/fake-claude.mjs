@@ -2,12 +2,15 @@
 // A stand-in for the Claude CLI so tests never touch the real one or the subscription. Reads the
 // prompt from stdin like the real `claude -p`, then answers according to FAKE_CLAUDE_MODE:
 //   success (default) | schema | auth401 | limit | max_turns | budget | slow | crash | garbage
-// It records its argv to FAKE_CLAUDE_ARGV_FILE when set, so tests can assert on the flag set.
-import { appendFileSync } from "node:fs"
+// It records its argv to FAKE_CLAUDE_ARGV_FILE when set, so tests can assert on the flag set, and
+// its pid to FAKE_CLAUDE_PID_FILE when set, so tests can check the process was killed.
+import { appendFileSync, writeFileSync } from "node:fs"
 
 const mode = process.env.FAKE_CLAUDE_MODE ?? "success"
 const argvFile = process.env.FAKE_CLAUDE_ARGV_FILE
 if (argvFile) appendFileSync(argvFile, `${JSON.stringify(process.argv.slice(2))}\n`)
+const pidFile = process.env.FAKE_CLAUDE_PID_FILE
+if (pidFile) writeFileSync(pidFile, String(process.pid))
 
 let prompt = ""
 process.stdin.setEncoding("utf8")
