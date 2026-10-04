@@ -16,11 +16,11 @@ export interface Config {
   claudeCodeOauthToken: string
   /** Path or name of the CLI binary; tests point it at a fake. */
   claudeBin: string
-  /** city-hall's base URL, reached through the edge. */
+  /** The job queue's base URL: http://job-queue:8080 on its host, else its public hostname. */
   cityHallUrl: string
-  /** The usr-issued runner credential city-hall verifies (shape proposed on city-hall#2, still open: plan item 25); never logged. */
+  /** This runner's token in the queue's JOB_QUEUE_RUNNERS; never logged. */
   cityHallRunnerToken: string
-  /** Cloudflare Access service token for city-hall's hostname; both or neither. */
+  /** Cloudflare Access service token for the queue's public hostname; both or neither. */
   cfAccessClientId?: string
   cfAccessClientSecret?: string
   claudeTimeoutMs: number

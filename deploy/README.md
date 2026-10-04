@@ -12,7 +12,7 @@ operator edits; `rt render` derives the two files compose and the container read
 
 ## Where it runs
 
-The runner polls [Rackbops/job-queue](https://github.com/Rackbops/job-queue) (the `CITY_HALL_*` names are the shipped ones from when city-hall was the queue; they stay). In production both run on one host, each in its own stack, and both join an external Docker network named `docket`: the runner reaches the queue as `http://job-queue:8080`, the queue's container name, and never crosses the edge, so it needs no Access token. Everything else (the tracker) reaches the queue through its own Cloudflare Tunnel and Access; that sidecar lives in job-queue's stack, not here.
+The runner polls [Rackbops/job-queue](https://github.com/Rackbops/job-queue) (the `CITY_HALL_*` names are the shipped ones from when city-hall was the queue; they stay). In production both run on one host, each in its own stack, and both join an external Docker network named `docket`: the runner reaches the queue as `http://job-queue:8080`, the queue's container name, and never crosses the edge, so the Access pair can stay blank. Clients on other hosts reach the queue through its own Cloudflare Tunnel and Access; that sidecar lives in job-queue's stack, not here.
 
 A runner on a host without the queue deletes the two `networks` blocks from `compose.yaml`, sets `CITY_HALL_URL` to the queue's public `https` hostname, and fills the `CF_ACCESS_*` pair.
 
