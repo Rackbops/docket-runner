@@ -43,21 +43,21 @@ jobs:
       - run: docker run --rm --entrypoint claude docket-runner:ci --version
 
   # The end-to-end check (`just e2e`, test/e2e/run.sh; CONTEXT.md, "The end-to-end check"): the
-  # tracker's executor -> a real city-hall -> this runner (fake CLI) -> back to the tracker.
+  # tracker's executor -> a real Rackbops/job-queue -> this runner (fake CLI) -> back again.
   #
-  # It needs Lepid-Labs/city-hall, which is private. CITY_HALL_READ_TOKEN is a fine-grained PAT
-  # (resource owner Lepid-Labs, city-hall only, Contents read-only) that Lepid-Labs' owner must
-  # approve before it can read anything. The probe step decides what happens without access:
+  # It needs Rackbops/job-queue, which is private. JOB_QUEUE_READ_TOKEN is a fine-grained PAT
+  # (resource owner Rackbops, job-queue only, Contents read-only). The probe step decides what
+  # happens without access:
   # - no secret (a fork or Dependabot PR, or the secret is unset), 401 (expired or revoked), or
-  #   403/404 (not approved yet): a ::warning:: saying why, the same line in the job summary, every
-  #   later step skipped, and the job stays green -- unless the repo variable E2E_REQUIRED is
-  #   `true`, which turns each of those into an ::error:: and a red job;
+  #   403/404 (not approved, or no Contents read on job-queue): a ::warning:: saying why, the same line in
+  #   the job summary, every later step skipped, and the job stays green -- unless the repo
+  #   variable E2E_REQUIRED is `true`, which turns each of those into an ::error:: and a red job;
   # - no response (000) or any other code, 5xx included, after curl's retries: a red job, always.
-  # Skipping is deliberate: the job turns itself on the first run after the token is approved, with
+  # Skipping is deliberate: the job turns itself on the first run after the secret can read, with
   # no further PR. Once that first run is green, set E2E_REQUIRED=true (CONTEXT.md).
   #
-  # The three repos are checked out side by side (docket-runner/, city-hall/, bot-plugins/), not
-  # nested: run.sh runs `pnpm install` in city-hall, and a city-hall inside this checkout would
+  # The three repos are checked out side by side (docket-runner/, job-queue/, bot-plugins/), not
+  # nested: run.sh runs `pnpm install` in job-queue, and a job-queue inside this checkout would
   # find this repo's pnpm-workspace.yaml above it.
   e2e:
     runs-on: ubuntu-latest
@@ -70,33 +70,33 @@ jobs:
       # The pins live only in test/e2e/pins.env; each becomes an env var for the checkouts below.
       - name: Load the pins
         run: grep -E '^[A-Z_]+=[0-9a-f]{40}$' docket-runner/test/e2e/pins.env >> "$GITHUB_ENV"
-      - name: Probe read access to Lepid-Labs/city-hall
+      - name: Probe read access to Rackbops/job-queue
         id: probe
         env:
-          TOKEN: ${{ secrets.CITY_HALL_READ_TOKEN }}
+          TOKEN: ${{ secrets.JOB_QUEUE_READ_TOKEN }}
           E2E_REQUIRED: ${{ vars.E2E_REQUIRED }}
         run: |
           reason=
           if [ -z "$TOKEN" ]; then
-            reason="CITY_HALL_READ_TOKEN is not available to this run (e.g. a fork or Dependabot PR, or the secret is unset)"
+            reason="JOB_QUEUE_READ_TOKEN is not available to this run (e.g. a fork or Dependabot PR, or the secret is unset)"
           else
             code=$(curl -sS -o /dev/null -w '%{http_code}' --retry 3 --retry-all-errors \
               --max-time 20 -H "Authorization: Bearer $TOKEN" \
-              https://api.github.com/repos/Lepid-Labs/city-hall) || code=000
+              https://api.github.com/repos/Rackbops/job-queue/contents/package.json) || code=000
             case "$code" in
               200) ;;
               401)
-                reason="CITY_HALL_READ_TOKEN was refused (HTTP 401): expired or revoked; renew it (the current token expires 2026-12-31)"
+                reason="JOB_QUEUE_READ_TOKEN was refused (HTTP 401): expired or revoked; renew it"
                 ;;
               403 | 404)
-                reason="CITY_HALL_READ_TOKEN cannot read Lepid-Labs/city-hall (HTTP $code; most likely the Lepid-Labs owner has not yet approved the token)"
+                reason="JOB_QUEUE_READ_TOKEN cannot read Rackbops/job-queue (HTTP $code; not scoped to job-queue with Contents read-only, or awaiting approval if the Rackbops org requires it)"
                 ;;
               000)
-                echo "::error::No response from api.github.com probing Lepid-Labs/city-hall (after 3 retries)"
+                echo "::error::No response from api.github.com probing Rackbops/job-queue (after 3 retries)"
                 exit 1
                 ;;
               *)
-                echo "::error::Unexpected HTTP $code probing Lepid-Labs/city-hall (after retries)"
+                echo "::error::Unexpected HTTP $code probing Rackbops/job-queue (after retries)"
                 exit 1
                 ;;
             esac
@@ -115,10 +115,10 @@ jobs:
       - if: steps.probe.outputs.ok == 'true'
         uses: actions/checkout@v7
         with:
-          repository: Lepid-Labs/city-hall
-          ref: ${{ env.CITY_HALL_PIN }}
-          token: ${{ secrets.CITY_HALL_READ_TOKEN }}
-          path: city-hall
+          repository: Rackbops/job-queue
+          ref: ${{ env.JOB_QUEUE_PIN }}
+          token: ${{ secrets.JOB_QUEUE_READ_TOKEN }}
+          path: job-queue
           persist-credentials: false
       - if: steps.probe.outputs.ok == 'true'
         uses: actions/checkout@v7
@@ -155,20 +155,20 @@ jobs:
       - if: steps.probe.outputs.ok == 'true'
         working-directory: docket-runner
         env:
-          CITY_HALL_DIR: ${{ github.workspace }}/city-hall
+          JOB_QUEUE_DIR: ${{ github.workspace }}/job-queue
           BOT_PLUGINS_DIR: ${{ github.workspace }}/bot-plugins
           E2E_OUT: ${{ runner.temp }}/e2e-logs
         run: just e2e
-      # This repo is public, and so is the artifact: everything city-hall wrote or answered (its
-      # build log, server logs, databases, job reads and job ids) is left out.
+      # This repo is public, and so is the artifact: everything job-queue wrote or answered (its
+      # build log, server logs, databases, job reads and job ids) is left out of the artifact.
       - if: failure() && steps.probe.outputs.ok == 'true'
         uses: actions/upload-artifact@v7
         with:
           name: e2e-logs
           path: |
             ${{ runner.temp }}/e2e-logs
-            !${{ runner.temp }}/e2e-logs/city-hall-build.log
-            !${{ runner.temp }}/e2e-logs/*.city-hall.log
+            !${{ runner.temp }}/e2e-logs/job-queue-build.log
+            !${{ runner.temp }}/e2e-logs/*.job-queue.log
             !${{ runner.temp }}/e2e-logs/*.db
             !${{ runner.temp }}/e2e-logs/*.db-*
             !${{ runner.temp }}/e2e-logs/*.job.json
