@@ -4,15 +4,21 @@
 # (COMPOSE_PROJECT_NAME=docket-runner-<stack directory basename>), so two stacks on one box never
 # share a project.
 #
-# The runner is OUTBOUND ONLY: it polls city-hall through the edge and nothing reaches it. The
-# only published port is the health endpoint, host-side loopback, for `rt health` and a local
+# The runner is OUTBOUND ONLY: it polls the job queue (Rackbops/job-queue) and nothing reaches it.
+# The only published port is the health endpoint, host-side loopback, for `rt health` and a local
 # monitor. No tunnel, no sidecar.
+#
+# This is the production shape: the queue runs on the same host, and both stacks join the
+# external `docket` network (`docker network create docket` once per host, before `./rt up`), so
+# the runner reaches the queue as http://job-queue:8080 (CITY_HALL_URL) without the edge. A
+# runner on another host deletes both `networks` blocks below and sets CITY_HALL_URL to the
+# queue's public hostname plus the CF_ACCESS_* pair instead.
 
 services:
   runner:
     # IMAGE / IMAGE_TAG come from .env. No fallback tag: compose refuses a .env without IMAGE_TAG.
     image: ${IMAGE}:${IMAGE_TAG:?IMAGE_TAG is unset or blank -- run ./rt render}
-    # app.env is the container half: the credential, city-hall's address, the caps. The stack
+    # app.env is the container half: the credential, the queue's address, the caps. The stack
     # half (.env) never enters the container.
     env_file: [app.env]
     ports:
@@ -33,6 +39,12 @@ services:
     # Restarts the same image it was created from and never re-checks the registry: publishing an
     # image deploys nothing. `rt pull-and-recreate` is the deploy.
     restart: unless-stopped
+    networks: [docket]
 
 volumes:
   claude-home:
+
+networks:
+  # Created by hand and shared with job-queue's stack. External, so `./rt down` never removes it.
+  docket:
+    external: true
