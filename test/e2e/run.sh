@@ -108,12 +108,12 @@ TOKEN_A=e2e-runner-a-token
 TOKEN_B=e2e-runner-b-token
 TOKEN_X=e2e-runner-x-token
 CAPABILITY=claude-cli:subscription
-export E2E_QUEUE_KEY=$KEY E2E_CAPABILITY=$CAPABILITY
+export E2E_CITY_HALL_KEY=$KEY E2E_CAPABILITY=$CAPABILITY
 
 start_queue() { # $1 scenario, $2 lease seconds
   local port
   port=$(free_port)
-  export E2E_QUEUE_URL="http://127.0.0.1:$port"
+  export E2E_CITY_HALL_URL="http://127.0.0.1:$port"
   # Two runners carry the tracker's capability tag; runner-x carries another one.
   JOB_QUEUE_DB="$OUT/$1.job-queue.db" JOB_QUEUE_SOURCE_KEYS="$KEY" \
     JOB_QUEUE_LEASE_SECONDS="$2" PORT="$port" HOST=127.0.0.1 JOB_QUEUE_LOG_LEVEL=debug \
@@ -122,7 +122,7 @@ start_queue() { # $1 scenario, $2 lease seconds
   QUEUE_PID=$!
   PIDS+=("$QUEUE_PID")
   for _ in $(seq 100); do
-    curl -fsS "$E2E_QUEUE_URL/api/health" >/dev/null 2>&1 && return 0
+    curl -fsS "$E2E_CITY_HALL_URL/api/health" >/dev/null 2>&1 && return 0
     kill -0 "$QUEUE_PID" 2>/dev/null || break
     sleep 0.1
   done
@@ -145,7 +145,7 @@ stop() { # pid...: stops each and drops it from PIDS, so cleanup never signals a
 }
 
 start_runner() { # $1 log name, $2 token, $3 FAKE_CLAUDE_MODE, [$4 delay ms]
-  CITY_HALL_URL="$E2E_QUEUE_URL" CITY_HALL_RUNNER_TOKEN="$2" \
+  CITY_HALL_URL="$E2E_CITY_HALL_URL" CITY_HALL_RUNNER_TOKEN="$2" \
     CLAUDE_CODE_OAUTH_TOKEN=e2e-fake-not-a-token CLAUDE_BIN="$FAKE" \
     FAKE_CLAUDE_MODE="$3" FAKE_CLAUDE_DELAY_MS="${4:-400}" FAKE_CLAUDE_PID_FILE="$OUT/$1.pid" \
     POLL_INTERVAL_MS=200 HEALTH_PORT=0 HEALTH_BIND=127.0.0.1 \
@@ -165,7 +165,7 @@ drive() { # $1 scenario, then driver options
 }
 
 job() { # $1 scenario: job-queue's view of the scenario's job, as the source reads it
-  curl -fsS -H "Authorization: Bearer $KEY" "$E2E_QUEUE_URL/api/execute/jobs/$(cat "$OUT/$1.id")"
+  curl -fsS -H "Authorization: Bearer $KEY" "$E2E_CITY_HALL_URL/api/execute/jobs/$(cat "$OUT/$1.id")"
 }
 
 expect_job() { # $1 scenario, $2 JS expression over `j` (the GET body) that must be true

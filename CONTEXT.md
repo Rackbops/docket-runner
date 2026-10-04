@@ -38,9 +38,9 @@ model lane across three repos on 127.0.0.1: the tracker plugin's real executor
 (rackbops-bot-plugins `plugins/tracker/src/executor.ts`) submits research Jobs built by
 docket-types' `researchJob()` to a real Rackbops/job-queue (`node dist/index.js`, two runners
 tagged `claude-cli:subscription` and one tagged `other-tag`), this runner's `dist/` claims them
-and runs the fake CLI, and the tracker reads the result back. job-queue serves the same execute
-API as Lepid-Labs/city-hall (job-queue's README), so neither the tracker nor this runner changes
-for it. Each scenario gets a fresh queue and is asserted on the tracker's answer, the queue's view
+and runs the fake CLI, and the tracker reads the result back. job-queue serves the API the tracker's
+executor and this runner already speak (job-queue's README), so neither changes for it. Each
+scenario group gets a fresh queue (the wiring negatives share one) and is asserted on the tracker's answer, the queue's view
 of the job, and the runner's log; the first failure stops everything, exits non-zero and keeps the
 logs. It is not part of `just check`.
 
@@ -77,8 +77,10 @@ unless `E2E_ALLOW_UNPINNED=1`, and one with uncommitted changes always. To bump 
 full 40-character SHA in `pins.env` in the same PR (and the clone commands above).
 
 job-queue's own `test/e2e/run.sh` is an adapted copy of this script that runs the same twelve
-scenarios from the queue's side, pinned to a docket-runner commit; a change to a scenario here
-belongs there too.
+scenarios from the queue's side, pinned to a docket-runner commit. It runs this repo's
+`drive-tracker.ts`, so the driver's options and its `E2E_CITY_HALL_URL`, `E2E_CITY_HALL_KEY` and
+`E2E_CAPABILITY` variables are an interface to that script; a change to them or to a scenario
+here belongs there too.
 
 What it does not prove: the real CLI, the subscription credential, the edge (Cloudflare Access;
 the tracker's own config parser refuses `http://`, so the driver builds the config itself), or the
@@ -95,9 +97,11 @@ Bun (the version in the plugins checkout's `package.json`), and runs `just insta
 setup-bun) are pinned to full commit SHAs, with the tag in a comment.
 
 On failure the logs (`$E2E_OUT`) are uploaded as the `e2e-logs` artifact, kept for 3 days. This
-repo is public, so the artifact is too, and job-queue output is left out: its build log, its
+repo is public, so the artifact is too, and job-queue output is left out of it: its build log, its
 server logs, its databases, and the job reads and job ids (`*.job.json`, `*.id`). What is kept is
-this runner's logs, the tracker driver's output and the plugins install log.
+this runner's logs, the tracker driver's output and the plugins install log. On a failure,
+`run.sh` still prints some job-queue output to the public job log: the queue's log when it fails
+to start, and the job read that failed an assertion. It is synthetic test data.
 
 Rackbops/job-queue is private. The job reads it with the repo secret `JOB_QUEUE_READ_TOKEN`: a
 fine-grained PAT whose resource owner is Rackbops, scoped to job-queue only, Contents read-only.
@@ -107,15 +111,16 @@ trees) could still read it from the runner. The exposure is accepted: it is a re
 token for one repo, and fork and Dependabot PRs get no secrets. Renovate branches are same-repo,
 so they do get it.
 
-The job probes access first (`GET /repos/Rackbops/job-queue` with the token, `curl --retry 3
---retry-all-errors --max-time 20`). When the secret is empty or the probe answers 401, 403 or 404,
+The job probes access first: `GET /repos/Rackbops/job-queue/contents/package.json` with the
+token (`curl --retry 3 --retry-all-errors --max-time 20`), a Contents read, so a token without
+Contents skips here rather than failing at the checkout. When the secret is empty or the probe answers 401, 403 or 404,
 the job emits a warning annotation, writes the same line to the job summary, skips every later
 step, and stays **green**. A green `e2e` check is therefore not proof the end-to-end check ran:
 look at the job's annotations or summary. The warning reads
 
-- `JOB_QUEUE_READ_TOKEN cannot read Rackbops/job-queue (HTTP <code>; the token is not approved
-  yet, or not scoped to job-queue with Contents read); end-to-end check skipped` -- GitHub answers
-  403 or 404;
+- `JOB_QUEUE_READ_TOKEN cannot read Rackbops/job-queue (HTTP <code>; not scoped to job-queue with
+  Contents read-only, or awaiting approval if the Rackbops org requires it); end-to-end check
+  skipped` -- GitHub answers 403 or 404 (an org policy that blocks fine-grained tokens is a 403);
 - `JOB_QUEUE_READ_TOKEN was refused (HTTP 401): expired or revoked; renew it; end-to-end check
   skipped` -- renew the token;
 - `JOB_QUEUE_READ_TOKEN is not available to this run (e.g. a fork or Dependabot PR, or the secret
@@ -133,7 +138,8 @@ Secrets and variables > Actions > Variables) so an expired or revoked token turn
 instead of silently skipping. With it set, each of the three skips above is an error annotation
 (the same text, without "; end-to-end check skipped") and a red job.
 
-Renew the token before it expires (same scope) and update the secret, or the job falls back to
+Renew the token before the expiry shown on its GitHub settings page (same scope) and update the
+secret, or the job falls back to
 skipping with the 401 warning (or, with `E2E_REQUIRED=true`, goes red).
 
 To bump a pin in CI, change the full 40-character SHA in `pins.env` (as above): the job reads it

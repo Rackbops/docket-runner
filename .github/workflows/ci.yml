@@ -43,13 +43,13 @@ jobs:
       - run: docker run --rm --entrypoint claude docket-runner:ci --version
 
   # The end-to-end check (`just e2e`, test/e2e/run.sh; CONTEXT.md, "The end-to-end check"): the
-  # tracker's executor -> a real Rackbops/job-queue -> this runner (fake CLI) -> back to the tracker.
+  # tracker's executor -> a real Rackbops/job-queue -> this runner (fake CLI) -> back again.
   #
   # It needs Rackbops/job-queue, which is private. JOB_QUEUE_READ_TOKEN is a fine-grained PAT
   # (resource owner Rackbops, job-queue only, Contents read-only). The probe step decides what
   # happens without access:
   # - no secret (a fork or Dependabot PR, or the secret is unset), 401 (expired or revoked), or
-  #   403/404 (not approved, or not scoped to job-queue): a ::warning:: saying why, the same line in
+  #   403/404 (not approved, or no Contents read on job-queue): a ::warning:: saying why, the same line in
   #   the job summary, every later step skipped, and the job stays green -- unless the repo
   #   variable E2E_REQUIRED is `true`, which turns each of those into an ::error:: and a red job;
   # - no response (000) or any other code, 5xx included, after curl's retries: a red job, always.
@@ -82,14 +82,14 @@ jobs:
           else
             code=$(curl -sS -o /dev/null -w '%{http_code}' --retry 3 --retry-all-errors \
               --max-time 20 -H "Authorization: Bearer $TOKEN" \
-              https://api.github.com/repos/Rackbops/job-queue) || code=000
+              https://api.github.com/repos/Rackbops/job-queue/contents/package.json) || code=000
             case "$code" in
               200) ;;
               401)
                 reason="JOB_QUEUE_READ_TOKEN was refused (HTTP 401): expired or revoked; renew it"
                 ;;
               403 | 404)
-                reason="JOB_QUEUE_READ_TOKEN cannot read Rackbops/job-queue (HTTP $code; the token is not approved yet, or not scoped to job-queue with Contents read)"
+                reason="JOB_QUEUE_READ_TOKEN cannot read Rackbops/job-queue (HTTP $code; not scoped to job-queue with Contents read-only, or awaiting approval if the Rackbops org requires it)"
                 ;;
               000)
                 echo "::error::No response from api.github.com probing Rackbops/job-queue (after 3 retries)"
@@ -160,7 +160,7 @@ jobs:
           E2E_OUT: ${{ runner.temp }}/e2e-logs
         run: just e2e
       # This repo is public, and so is the artifact: everything job-queue wrote or answered (its
-      # build log, server logs, databases, job reads and job ids) is left out.
+      # build log, server logs, databases, job reads and job ids) is left out of the artifact.
       - if: failure() && steps.probe.outputs.ok == 'true'
         uses: actions/upload-artifact@v7
         with:
