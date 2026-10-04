@@ -1,7 +1,8 @@
 // The tracker's side of the end-to-end check (test/e2e/run.sh). Runs under Bun, as the tracker
 // plugin does, and drives the real city-hall Executor from a rackbops-bot-plugins checkout
 // (plugins/tracker/src/executor.ts) with the real research type's Job (docket-types
-// `researchJob`), against a local city-hall. Nothing here is imported from the runner's src/.
+// `researchJob`), against a local Rackbops/job-queue, which serves the same execute API. Nothing
+// here is imported from the runner's src/.
 //
 //   bun test/e2e/drive-tracker.ts <scenario> --expect pending|unavailable|result [options]
 //
@@ -11,10 +12,10 @@
 //   --detail S      with pending or unavailable: an answer of that kind must say S
 //   --hold-ms N     with pending: every answer for N ms must be pending (N <= --timeout-ms)
 //   --timeout-ms N  give up after N ms (default 20000)
-//   --key K         the source key to submit with (default $E2E_CITY_HALL_KEY)
-//   --id-file F     write city-hall's job id to F once the tracker has one on record
+//   --key K         the source key to submit with (default $E2E_QUEUE_KEY)
+//   --id-file F     write the queue's job id to F once the tracker has one on record
 //
-// Env: BOT_PLUGINS_DIR, E2E_CITY_HALL_URL, E2E_CITY_HALL_KEY, E2E_CAPABILITY.
+// Env: BOT_PLUGINS_DIR, E2E_QUEUE_URL, E2E_QUEUE_KEY, E2E_CAPABILITY.
 // Prints one JSON line per new answer and a last {"final": ...} line; exits 0 when the
 // expectation holds, 1 (with "FAIL: why" on stderr) when it does not.
 import { Database } from "bun:sqlite"
@@ -43,8 +44,8 @@ const holdMs = Number(opt("--hold-ms") ?? "0")
 const timeoutMs = Number(opt("--timeout-ms") ?? "20000")
 const idFile = opt("--id-file")
 const wantAnswer = args.includes("--answer")
-const url = env("E2E_CITY_HALL_URL")
-const key = opt("--key") ?? env("E2E_CITY_HALL_KEY")
+const url = env("E2E_QUEUE_URL")
+const key = opt("--key") ?? env("E2E_QUEUE_KEY")
 const capability = env("E2E_CAPABILITY")
 // The loop stops at the timeout, so a hold longer than it would pass without holding at all.
 if (holdMs > 0 && timeoutMs < holdMs) {
@@ -60,7 +61,7 @@ const types = await import(Bun.resolveSync("@rackbops/docket-types", trackerDir)
 const tracker = await import(join(trackerDir, "src", "executor.ts"))
 
 // The real config parser refuses an http:// origin (executor.ts, parseCityHallConfig), and the
-// local city-hall is http, so the config is built here; the parser's verdict is printed only.
+// local queue is http, so the config is built here; the parser's verdict is printed only.
 let parser: string
 try {
   const s = tracker.parseCityHallConfig({
@@ -75,7 +76,7 @@ try {
 console.log(JSON.stringify({ scenario, parseCityHallConfig: parser }))
 
 // The tracker's own table (migration 6), in memory: the executor keeps docket's Job key -> the
-// city-hall job id there.
+// queue's job id there.
 const db = new Database(":memory:")
 db.exec(`CREATE TABLE executor_jobs (job_key TEXT PRIMARY KEY, occurrence_id TEXT NOT NULL,
   remote_id TEXT NOT NULL, created_at TEXT NOT NULL, paused_at TEXT)`)
