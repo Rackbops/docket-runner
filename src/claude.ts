@@ -122,7 +122,7 @@ export const realExecutor: Executor = ({
  * stolen source key upstream cannot hand a run the shell beside the subscription token. Widening
  * it is a change to this file, reviewed like any other.
  */
-export const TOOL_CEILING: readonly string[] = DEFAULT_ALLOWED_TOOLS
+export const TOOL_CEILING: readonly string[] = ["WebSearch", "WebFetch"]
 
 /** A Job named a tool outside `TOOL_CEILING`; the Job is refused before the CLI starts. */
 export class ToolCeilingError extends Error {
@@ -138,13 +138,18 @@ export function toolName(entry: string): string {
 export interface ToolPlan {
   /** `--tools`: the only tools that exist in the run. Empty means none at all. */
   tools: string[]
-  /** `--allowedTools`: the Job's own entries, each inside the ceiling. */
+  /** `--allowedTools`: the Job's own entries, each a single tool inside the ceiling. */
   allowed: string[]
   /** `--disallowedTools`: the default shell and file denials, plus whatever the Job adds. */
   disallowed: string[]
 }
 
 const unique = (xs: readonly string[]): string[] => [...new Set(xs)]
+
+/** One tool name, optionally one rule in parentheses with no comma, space or nested paren. */
+const SINGLE_ENTRY_RE = /^[A-Za-z]+(\([^()\s,]*\))?$/
+/** How many refused entries a refusal names (each cut to 40 characters). */
+const MAX_NAMED = 5
 
 /**
  * What a Job may use, checked against `TOOL_CEILING`. Throws `ToolCeilingError` naming every
@@ -154,11 +159,17 @@ const unique = (xs: readonly string[]): string[] => [...new Set(xs)]
  */
 export function planTools(job: Pick<Job, "allowedTools" | "disallowedTools">): ToolPlan {
   const allowed = job.allowedTools ?? [...DEFAULT_ALLOWED_TOOLS]
-  const outside = unique(allowed.map(toolName).filter((name) => !TOOL_CEILING.includes(name)))
+  // The CLI splits an --allowedTools value on commas and spaces, so an entry must be exactly one
+  // tool, or one tool with a rule that holds neither: `WebFetch(x),Bash` would otherwise pass
+  // the name check here and reach the CLI as two entries.
+  const outside = unique(
+    allowed.filter((e) => !SINGLE_ENTRY_RE.test(e) || !TOOL_CEILING.includes(toolName(e))),
+  )
   if (outside.length > 0) {
-    const named = outside.map((n) => (n === "" ? '""' : n)).join(", ")
+    const shown = outside.slice(0, MAX_NAMED).map((e) => JSON.stringify(e.slice(0, 40)))
+    const more = outside.length > MAX_NAMED ? ` and ${outside.length - MAX_NAMED} more` : ""
     throw new ToolCeilingError(
-      `the Job asks for tools outside the runner's ceiling (${TOOL_CEILING.join(", ")}): ${named}`,
+      `the Job asks for tools outside the runner's ceiling (${TOOL_CEILING.join(", ")}): ${shown.join(", ")}${more}`,
     )
   }
   const disallowed = unique([...DEFAULT_DISALLOWED_TOOLS, ...(job.disallowedTools ?? [])])

@@ -93,7 +93,13 @@ describe("the tool ceiling (docket-runner#23)", () => {
     expect(plan.disallowed).toEqual(["Bash", "Edit", "Write", "NotebookEdit", "Task"])
   })
 
-  it("lets a Job narrow it: research and the scout ask for the ceiling as it is", () => {
+  it("lets a Job narrow it to a subset", () => {
+    const plan = planTools({ allowedTools: ["WebSearch"] })
+    expect(plan.tools).toEqual(["WebSearch"])
+    expect(plan.allowed).toEqual(["WebSearch"])
+  })
+
+  it("lets research and the scout ask for the ceiling as it is", () => {
     const plan = planTools({
       allowedTools: ["WebSearch", "WebFetch"],
       disallowedTools: ["Bash", "Edit", "Write", "NotebookEdit", "Task"],
@@ -147,12 +153,41 @@ describe("the tool ceiling (docket-runner#23)", () => {
 
   it("refuses a Job that asks for a tool outside the ceiling, naming it", () => {
     expect(() => planTools({ allowedTools: ["WebSearch", "Bash"] })).toThrow(ToolCeilingError)
-    expect(() => planTools({ allowedTools: ["Bash(git *)"] })).toThrow(/: Bash$/)
-    expect(() => planTools({ allowedTools: ["Read", "mcp__x__y"] })).toThrow(/: Read, mcp__x__y$/)
+    expect(() => planTools({ allowedTools: ["Bash(git *)"] })).toThrow(/: "Bash\(git \*\)"$/)
+    expect(() => planTools({ allowedTools: ["Read", "mcp__x__y"] })).toThrow(
+      /: "Read", "mcp__x__y"$/,
+    )
     expect(() => planTools({ allowedTools: [""] })).toThrow(/: ""$/)
+    expect(() => planTools({ allowedTools: ["webfetch"] })).toThrow(ToolCeilingError)
     expect(() => buildArgs(parseJob(job({ allowedTools: ["Bash"] })), config)).toThrow(
       ToolCeilingError,
     )
+  })
+
+  it("refuses an entry the CLI would split into two tools", () => {
+    for (const entry of [
+      "WebFetch(x),Bash",
+      "WebFetch(x) Bash",
+      "WebFetch,Read",
+      "WebSearch Read",
+      " WebFetch",
+      "WebFetch(a(b))",
+      "WebFetch(domain:a.example,b.example)",
+    ]) {
+      expect(() => planTools({ allowedTools: [entry] }), entry).toThrow(ToolCeilingError)
+    }
+  })
+
+  it("names at most five refused entries, each cut short", () => {
+    const many = Array.from({ length: 7 }, (_, i) => `Tool${i}${"x".repeat(60)}`)
+    let message = ""
+    try {
+      planTools({ allowedTools: many })
+    } catch (err) {
+      message = (err as Error).message
+    }
+    expect(message).toMatch(/and 2 more$/)
+    expect(message).not.toContain("x".repeat(41))
   })
 
   it("never starts the CLI for a refused Job and reports an error naming the tool", async () => {
