@@ -1,7 +1,7 @@
 {
   "name": "docket-runner",
   "private": true,
-  "version": "0.0.3",
+  "version": "0.0.4",
   "description": "Runs Claude Code print-mode jobs for the docket task tracker. Claims Jobs from city-hall, runs claude -p as the Job says, posts the JobResult back. Holds the only Claude credential; never an API key.",
   "license": "MIT",
   "type": "module",
