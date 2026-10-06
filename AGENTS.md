@@ -37,10 +37,11 @@ an `ANTHROPIC_*` variable, an SDK dependency, or a `--bare` flag (it never reads
   deps.mjs` fails the build on a value import, and the Dockerfile's smoke check repeats it. The
   runner's own are `Lease`, `Job` (spec + id + lease), `parseJob`, and mirrors of the default
   tool lists that `test/contract.test.ts` pins to the core's.
-- **Outbound only.** It polls city-hall through the edge with a Cloudflare Access service token
-  and its usr-issued credential. Nothing listens except the health endpoint, published on host
-  loopback.
-- **It never retries a Job.** A failure is classified and posted; city-hall decides. A lost
+- **Outbound only.** It polls the queue (Rackbops/job-queue; city-hall until plan rev29) with its
+  runner token: in production over the shared Docker network `docket` on the queue's own host
+  (`http://job-queue:8080`), elsewhere through the edge with a Cloudflare Access service token.
+  Nothing listens except the health endpoint, published on host loopback.
+- **It never retries a Job.** A failure is classified and posted; the queue decides. A lost
   lease means the outcome is not posted at all and the CLI is stopped.
 
 ## Ground truth

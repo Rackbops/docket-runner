@@ -177,7 +177,10 @@ errors) and research-triage's `claudeAuth.ts` evidence, both as of 2026-09-26.
 `render.mjs` writes `.env` (compose: image, tag, health port, project name) and `app.env` (the
 container's environment) with compose's own quoting rules; `rt` wraps compose. `render` exits 1
 naming a missing required field and 2 on a forbidden key. Two stacks on one host get distinct
-compose projects from their directory names.
+compose projects from their directory names. `compose.yaml.example` joins the external `docket`
+network, as production does: job-queue's stack (on the same host) joins it too, so the runner
+reaches the queue at `http://job-queue:8080` without the edge; a runner on another host drops the
+`networks` blocks and uses the public hostname with the Access pair.
 
 ## Images
 
