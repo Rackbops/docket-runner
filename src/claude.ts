@@ -115,17 +115,87 @@ export const realExecutor: Executor = ({
     child.stdin.end()
   })
 
-/** The CLI arguments for a Job. Pure, so the flag set is unit-tested without a process. */
+/**
+ * The most tools any run may have (plan 5.6; tier-2 design pass E11, decision 3;
+ * docket-runner#23). The runner holds it, not the Job: a Job may narrow it -- a subset, or a rule
+ * such as `WebFetch(domain:example.com)` on a tool in it -- and never widen it, so a bug or a
+ * stolen source key upstream cannot hand a run the shell beside the subscription token. Widening
+ * it is a change to this file, reviewed like any other.
+ */
+export const TOOL_CEILING: readonly string[] = ["WebSearch", "WebFetch"]
+
+/** A Job named a tool outside `TOOL_CEILING`; the Job is refused before the CLI starts. */
+export class ToolCeilingError extends Error {
+  override name = "ToolCeilingError"
+}
+
+/** The tool an allow or deny entry names: `WebFetch(domain:x)` is `WebFetch`. */
+export function toolName(entry: string): string {
+  const open = entry.indexOf("(")
+  return (open < 0 ? entry : entry.slice(0, open)).trim()
+}
+
+export interface ToolPlan {
+  /** `--tools`: the only tools that exist in the run. Empty means none at all. */
+  tools: string[]
+  /** `--allowedTools`: the Job's own entries, each a single tool inside the ceiling. */
+  allowed: string[]
+  /** `--disallowedTools`: the default shell and file denials, plus whatever the Job adds. */
+  disallowed: string[]
+}
+
+const unique = (xs: readonly string[]): string[] => [...new Set(xs)]
+
+/** One tool name, optionally one rule in parentheses with no comma, space or nested paren. */
+const SINGLE_ENTRY_RE = /^[A-Za-z]+(\([^()\s,]*\))?$/
+/** How many refused entries a refusal names (each cut to 40 characters). */
+const MAX_NAMED = 5
+
+/**
+ * What a Job may use, checked against `TOOL_CEILING`. Throws `ToolCeilingError` naming every
+ * tool outside it. A Job with no `allowedTools` gets the ceiling's defaults; `disallowedTools`
+ * always keeps the default denials, which a Job can add to but not remove. A tool the Job denies
+ * outright (a bare name, not a rule) is left out of `tools` too.
+ */
+export function planTools(job: Pick<Job, "allowedTools" | "disallowedTools">): ToolPlan {
+  const allowed = job.allowedTools ?? [...DEFAULT_ALLOWED_TOOLS]
+  // The CLI splits an --allowedTools value on commas and spaces, so an entry must be exactly one
+  // tool, or one tool with a rule that holds neither: `WebFetch(x),Bash` would otherwise pass
+  // the name check here and reach the CLI as two entries.
+  const outside = unique(
+    allowed.filter((e) => !SINGLE_ENTRY_RE.test(e) || !TOOL_CEILING.includes(toolName(e))),
+  )
+  if (outside.length > 0) {
+    const shown = outside.slice(0, MAX_NAMED).map((e) => JSON.stringify(e.slice(0, 40)))
+    const more = outside.length > MAX_NAMED ? ` and ${outside.length - MAX_NAMED} more` : ""
+    throw new ToolCeilingError(
+      `the Job asks for tools outside the runner's ceiling (${TOOL_CEILING.join(", ")}): ${shown.join(", ")}${more}`,
+    )
+  }
+  const disallowed = unique([...DEFAULT_DISALLOWED_TOOLS, ...(job.disallowedTools ?? [])])
+  const deniedOutright = new Set(disallowed.filter((e) => !e.includes("(")).map((e) => e.trim()))
+  const tools = unique(allowed.map(toolName)).filter((name) => !deniedOutright.has(name))
+  return { tools, allowed, disallowed }
+}
+
+/**
+ * The CLI arguments for a Job. Pure, so the flag set is unit-tested without a process. Throws
+ * `ToolCeilingError` for a Job outside the tool ceiling (`runJob` turns that into a failure).
+ */
 export function buildArgs(job: Job, config: Config): string[] {
+  const plan = planTools(job)
   const args = ["-p", "--output-format", "json"]
   const model = job.model ?? config.defaultModel
   if (model) args.push("--model", model)
   args.push("--max-turns", String(job.maxTurns ?? config.defaultMaxTurns))
   args.push("--max-budget-usd", String(job.maxBudgetUsd ?? config.defaultMaxBudgetUsd))
-  const allowed = job.allowedTools ?? [...DEFAULT_ALLOWED_TOOLS]
-  const disallowed = job.disallowedTools ?? [...DEFAULT_DISALLOWED_TOOLS]
-  if (allowed.length > 0) args.push("--allowedTools", allowed.join(","))
-  if (disallowed.length > 0) args.push("--disallowedTools", disallowed.join(","))
+  // --tools is what exists in the run at all: anything not named (Read, Glob, Bash, ...) is gone,
+  // not merely unapproved. "" means no tools. --strict-mcp-config with no --mcp-config loads no
+  // MCP server from any settings file the CLI might find.
+  args.push("--tools", plan.tools.join(","))
+  args.push("--strict-mcp-config")
+  if (plan.allowed.length > 0) args.push("--allowedTools", plan.allowed.join(","))
+  args.push("--disallowedTools", plan.disallowed.join(","))
   if (job.jsonSchema) args.push("--json-schema", JSON.stringify(job.jsonSchema))
   if (job.resumeSessionId) args.push("--resume", job.resumeSessionId)
   else args.push("--no-session-persistence")
@@ -259,10 +329,17 @@ export async function runJob(
   execute: Executor = realExecutor,
   signal?: AbortSignal,
 ): Promise<JobResult> {
+  let args: string[]
+  try {
+    args = buildArgs(job, config)
+  } catch (err) {
+    if (!(err instanceof ToolCeilingError)) throw err
+    return { kind: "error", detail: err.message.slice(0, 500), durationMs: 0 }
+  }
   const exec = await execute({
     ...(signal ? { signal } : {}),
     bin: config.claudeBin,
-    args: buildArgs(job, config),
+    args,
     stdin: job.prompt,
     timeoutMs: job.timeoutMs ?? config.claudeTimeoutMs,
     env: { ...buildSubprocessEnv(), CLAUDE_CODE_OAUTH_TOKEN: config.claudeCodeOauthToken },

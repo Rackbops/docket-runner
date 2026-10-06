@@ -157,6 +157,15 @@ city-hall has already taken the lease back -- requeued the Job, or failed it aft
 90a06ec). A heartbeat still in flight when the run ends is ignored. Before this, the CLI ran to
 the end and spent subscription usage on a result city-hall would refuse.
 
+## The tool ceiling
+
+`TOOL_CEILING` in `src/claude.ts` (`WebSearch`, `WebFetch`) is the most any run gets
+(docket-runner#23). `planTools` refuses a Job whose `allowedTools` names anything else, or an entry
+the CLI would split in two (a comma or space outside a rule), and `runJob` posts that as an `error`
+without starting the CLI. `--tools` carries the effective list, so tools outside it do not exist in
+the run at all; `--strict-mcp-config` with no `--mcp-config` loads no MCP server. All three flags
+exist in the pinned CLI (2.1.285). Widening the ceiling is a reviewed change to that constant.
+
 ## Classification facts
 
 `classify()` reads both the exit code and the envelope: the CLI exits 1 for every `is_error`

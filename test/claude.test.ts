@@ -9,8 +9,11 @@ import {
   EXCERPT_CHARS,
   type Exec,
   excerpt,
+  planTools,
   realExecutor,
   runJob,
+  TOOL_CEILING,
+  ToolCeilingError,
 } from "../src/claude.js"
 import { parseJob } from "../src/contract.js"
 import { FAKE_CLAUDE, job, testConfig } from "./helpers.js"
@@ -42,6 +45,8 @@ describe("buildArgs", () => {
     expect(args).toContain("--max-turns")
     expect(args[args.indexOf("--max-turns") + 1]).toBe("8")
     expect(args[args.indexOf("--max-budget-usd") + 1]).toBe("0.5")
+    expect(args[args.indexOf("--tools") + 1]).toBe("WebSearch,WebFetch")
+    expect(args).toContain("--strict-mcp-config")
     expect(args[args.indexOf("--allowedTools") + 1]).toBe("WebSearch,WebFetch")
     expect(args[args.indexOf("--disallowedTools") + 1]).toContain("Bash")
     expect(args).toContain("--no-session-persistence")
@@ -73,6 +78,133 @@ describe("buildArgs", () => {
   it("never puts the prompt on the command line", () => {
     const args = buildArgs(parseJob(job({ prompt: "SECRET PROMPT TEXT" })), config)
     expect(args.join(" ")).not.toContain("SECRET PROMPT TEXT")
+  })
+})
+
+describe("the tool ceiling (docket-runner#23)", () => {
+  it("is the web read set", () => {
+    expect([...TOOL_CEILING]).toEqual(["WebSearch", "WebFetch"])
+  })
+
+  it("gives a Job with no tools the ceiling, with the default denials", () => {
+    const plan = planTools({})
+    expect(plan.tools).toEqual(["WebSearch", "WebFetch"])
+    expect(plan.allowed).toEqual(["WebSearch", "WebFetch"])
+    expect(plan.disallowed).toEqual(["Bash", "Edit", "Write", "NotebookEdit", "Task"])
+  })
+
+  it("lets a Job narrow it to a subset", () => {
+    const plan = planTools({ allowedTools: ["WebSearch"] })
+    expect(plan.tools).toEqual(["WebSearch"])
+    expect(plan.allowed).toEqual(["WebSearch"])
+  })
+
+  it("lets research and the scout ask for the ceiling as it is", () => {
+    const plan = planTools({
+      allowedTools: ["WebSearch", "WebFetch"],
+      disallowedTools: ["Bash", "Edit", "Write", "NotebookEdit", "Task"],
+    })
+    expect(plan.tools).toEqual(["WebSearch", "WebFetch"])
+  })
+
+  it("lets a Job scope a tool by rule: the want-list judge's shop-site fetches", () => {
+    const plan = planTools({
+      allowedTools: ["WebFetch(domain:shop.example)", "WebFetch(domain:other.example)"],
+      disallowedTools: ["Bash", "Edit", "Write", "NotebookEdit", "Task", "WebSearch", "Read"],
+    })
+    expect(plan.tools).toEqual(["WebFetch"])
+    expect(plan.allowed).toEqual([
+      "WebFetch(domain:shop.example)",
+      "WebFetch(domain:other.example)",
+    ])
+  })
+
+  it("gives a Job that allows nothing and denies the web no tools at all: the inbox judge", () => {
+    const plan = planTools({
+      allowedTools: [],
+      disallowedTools: ["Bash", "Edit", "Write", "NotebookEdit", "Task", "WebSearch", "WebFetch"],
+    })
+    expect(plan.tools).toEqual([])
+    const args = buildArgs(
+      parseJob(job({ allowedTools: [], disallowedTools: ["WebSearch", "WebFetch"] })),
+      config,
+    )
+    expect(args[args.indexOf("--tools") + 1]).toBe("")
+    expect(args).not.toContain("--allowedTools")
+  })
+
+  it("keeps the default denials when a Job sends its own list, even an empty one", () => {
+    expect(planTools({ disallowedTools: [] }).disallowed).toEqual([
+      "Bash",
+      "Edit",
+      "Write",
+      "NotebookEdit",
+      "Task",
+    ])
+    expect(planTools({ disallowedTools: ["Read", "Bash"] }).disallowed).toEqual([
+      "Bash",
+      "Edit",
+      "Write",
+      "NotebookEdit",
+      "Task",
+      "Read",
+    ])
+  })
+
+  it("refuses a Job that asks for a tool outside the ceiling, naming it", () => {
+    expect(() => planTools({ allowedTools: ["WebSearch", "Bash"] })).toThrow(ToolCeilingError)
+    expect(() => planTools({ allowedTools: ["Bash(git *)"] })).toThrow(/: "Bash\(git \*\)"$/)
+    expect(() => planTools({ allowedTools: ["Read", "mcp__x__y"] })).toThrow(
+      /: "Read", "mcp__x__y"$/,
+    )
+    expect(() => planTools({ allowedTools: [""] })).toThrow(/: ""$/)
+    expect(() => planTools({ allowedTools: ["webfetch"] })).toThrow(ToolCeilingError)
+    expect(() => buildArgs(parseJob(job({ allowedTools: ["Bash"] })), config)).toThrow(
+      ToolCeilingError,
+    )
+  })
+
+  it("refuses an entry the CLI would split into two tools", () => {
+    for (const entry of [
+      "WebFetch(x),Bash",
+      "WebFetch(x) Bash",
+      "WebFetch,Read",
+      "WebSearch Read",
+      " WebFetch",
+      "WebFetch(a(b))",
+      "WebFetch(domain:a.example,b.example)",
+    ]) {
+      expect(() => planTools({ allowedTools: [entry] }), entry).toThrow(ToolCeilingError)
+    }
+  })
+
+  it("names at most five refused entries, each cut short", () => {
+    const many = Array.from({ length: 7 }, (_, i) => `Tool${i}${"x".repeat(60)}`)
+    let message = ""
+    try {
+      planTools({ allowedTools: many })
+    } catch (err) {
+      message = (err as Error).message
+    }
+    expect(message).toMatch(/and 2 more$/)
+    expect(message).not.toContain("x".repeat(41))
+  })
+
+  it("never starts the CLI for a refused Job and reports an error naming the tool", async () => {
+    let spawned = false
+    const result = await runJob(
+      parseJob(job({ allowedTools: ["WebFetch", "Bash"] })),
+      config,
+      async () => {
+        spawned = true
+        return { exitCode: 0, stdout: "{}", stderr: "", timedOut: false, durationMs: 1 }
+      },
+    )
+    expect(spawned).toBe(false)
+    expect(result.kind).toBe("error")
+    if (result.kind === "success") return
+    expect(result.detail).toContain("outside the runner's ceiling")
+    expect(result.detail).toContain("Bash")
   })
 })
 
