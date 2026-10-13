@@ -12,7 +12,7 @@
   "engines": {
     "node": ">=24"
   },
-  "packageManager": "pnpm@12.8.1",
+  "packageManager": "pnpm@12.11.2",
   "scripts": {
     "build": "tsc && node scripts/check-no-runtime-deps.mjs",
     "typecheck": "tsc --noEmit -p tsconfig.test.json",
@@ -24,10 +24,10 @@
     "check": "pnpm lint && pnpm typecheck && pnpm test && pnpm build"
   },
   "devDependencies": {
-    "@biomejs/biome": "^2.5.14",
-    "@rackbops/docket-core": "^0.5.0",
-    "@types/node": "^26.6.3",
+    "@biomejs/biome": "^2.5.15",
+    "@rackbops/docket-core": "^0.7.0",
+    "@types/node": "^26.6.5",
     "typescript": "^7.0.0",
-    "vitest": "^5.0.1"
+    "vitest": "^5.0.4"
   }
 }
