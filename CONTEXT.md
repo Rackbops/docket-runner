@@ -164,7 +164,7 @@ the end and spent subscription usage on a result city-hall would refuse.
 the CLI would split in two (a comma or space outside a rule), and `runJob` posts that as an `error`
 without starting the CLI. `--tools` carries the effective list, so tools outside it do not exist in
 the run at all; `--strict-mcp-config` with no `--mcp-config` loads no MCP server. All three flags
-exist in the pinned CLI (2.1.285). Widening the ceiling is a reviewed change to that constant.
+exist in the pinned CLI (2.1.296). Widening the ceiling is a reviewed change to that constant.
 
 ## Classification facts
 
