@@ -1,20 +1,20 @@
 #!/usr/bin/env bash
 # The end-to-end check of the tracker's model lane (`just e2e`): the tracker plugin's executor
-# submits research Jobs to a real local Rackbops/job-queue, docket-runner claims them and runs the
+# submits research Jobs to a real local Rackbops/city-hall, docket-runner claims them and runs the
 # fake CLI (test/fixtures/fake-claude.mjs), and the result goes back to the tracker. Everything
 # listens on 127.0.0.1; no model, no Claude credential, no network beyond the installs.
 #
-#   JOB_QUEUE_DIR=<Rackbops/job-queue checkout> BOT_PLUGINS_DIR=<rackbops-bot-plugins checkout> \
+#   CITY_HALL_DIR=<Rackbops/city-hall checkout> BOT_PLUGINS_DIR=<rackbops-bot-plugins checkout> \
 #     just e2e
 #
 # Each checkout must be clean and at its pin in test/e2e/pins.env (E2E_ALLOW_UNPINNED=1 runs one
-# at another commit anyway, with a warning). Needs node >= 24, pnpm, bun, git, curl and pgrep on
-# PATH. Installs and builds job-queue in its checkout, installs the plugins checkout; `just e2e`
-# builds this repo first. Logs go to $E2E_OUT (default: a new temp directory), kept and named on
+# at another commit anyway, with a warning). Needs node >= 24, npx, pnpm, bun, git, curl and pgrep
+# on PATH. Installs and builds city-hall in its checkout (with its own pnpm, through npx), installs
+# the plugins checkout; `just e2e` builds this repo first. Logs go to $E2E_OUT (default: a new temp directory), kept and named on
 # failure.
 #
 # CI runs this in the `e2e` job of .github/workflows/ci.yml, which skips itself (green, with a
-# warning) while its token cannot read Rackbops/job-queue; see CONTEXT.md.
+# warning) while its token cannot read Rackbops/city-hall; see CONTEXT.md.
 set -euo pipefail
 
 HERE=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
@@ -50,15 +50,15 @@ check_checkout() { # $1 variable name, $2 pin
   git -C "$dir" diff --quiet HEAD || die "$name=$dir has uncommitted changes"
   printf '%s' "$(cd "$dir" && pwd)"
 }
-JOB_QUEUE_DIR=$(check_checkout JOB_QUEUE_DIR "$JOB_QUEUE_PIN")
+CITY_HALL_DIR=$(check_checkout CITY_HALL_DIR "$CITY_HALL_PIN")
 BOT_PLUGINS_DIR=$(check_checkout BOT_PLUGINS_DIR "$BOT_PLUGINS_PIN")
 export BOT_PLUGINS_DIR
 
-for tool in node pnpm bun git curl pgrep; do
+for tool in node npx pnpm bun git curl pgrep; do
   command -v "$tool" >/dev/null || die "$tool is not on PATH"
 done
 NODE_MAJOR=$(node -p 'process.versions.node.split(".")[0]')
-[ "$NODE_MAJOR" -ge 24 ] || die "node $(node --version) is too old: job-queue needs node:sqlite (>= 24)"
+[ "$NODE_MAJOR" -ge 24 ] || die "node $(node --version) is too old: city-hall needs node:sqlite (>= 24)"
 [ -f "$ROOT/dist/index.js" ] || die "dist/index.js is missing: run \`just build\` (\`just e2e\` does)"
 
 OUT=${E2E_OUT:-$(mktemp -d "${TMPDIR:-/tmp}/docket-runner-e2e.XXXXXX")}
@@ -66,9 +66,12 @@ mkdir -p "$OUT"
 say "node $(node --version), bun $(bun --version); logs in $OUT"
 
 # --- install and build the checkouts --------------------------------------------------------------
-say "installing and building job-queue"
-(cd "$JOB_QUEUE_DIR" && pnpm install --frozen-lockfile && pnpm run build) >"$OUT/job-queue-build.log" 2>&1 ||
-  die "job-queue install or build failed: $OUT/job-queue-build.log"
+# city-hall pins another pnpm major than this repo, so it runs with its own (packageManager).
+CITY_HALL_PNPM=$(node -p 'require(process.argv[1]).packageManager.split("+")[0]' "$CITY_HALL_DIR/package.json")
+say "installing and building city-hall with $CITY_HALL_PNPM"
+(cd "$CITY_HALL_DIR" && npx --yes "$CITY_HALL_PNPM" install --frozen-lockfile &&
+  npx --yes "$CITY_HALL_PNPM" run build) >"$OUT/city-hall-build.log" 2>&1 ||
+  die "city-hall install or build failed: $OUT/city-hall-build.log"
 say "installing rackbops-bot-plugins"
 (cd "$BOT_PLUGINS_DIR" && bun install --frozen-lockfile) >"$OUT/bot-plugins-install.log" 2>&1 ||
   die "rackbops-bot-plugins install failed: $OUT/bot-plugins-install.log"
@@ -114,11 +117,13 @@ start_queue() { # $1 scenario, $2 lease seconds
   local port
   port=$(free_port)
   export E2E_CITY_HALL_URL="http://127.0.0.1:$port"
-  # Two runners carry the tracker's capability tag; runner-x carries another one.
-  JOB_QUEUE_DB="$OUT/$1.job-queue.db" JOB_QUEUE_SOURCE_KEYS="$KEY" \
-    JOB_QUEUE_LEASE_SECONDS="$2" PORT="$port" HOST=127.0.0.1 JOB_QUEUE_LOG_LEVEL=debug \
-    JOB_QUEUE_RUNNERS="[{\"id\":\"runner-a\",\"token\":\"$TOKEN_A\",\"tags\":[\"$CAPABILITY\"]},{\"id\":\"runner-b\",\"token\":\"$TOKEN_B\",\"tags\":[\"$CAPABILITY\"]},{\"id\":\"runner-x\",\"token\":\"$TOKEN_X\",\"tags\":[\"other-tag\"]}]" \
-    node "$JOB_QUEUE_DIR/dist/index.js" >"$OUT/$1.job-queue.log" 2>&1 &
+  # Two runners carry the tracker's capability tag; runner-x carries another one. No GitHub token,
+  # so city-hall's issue source stays off: the execute lane alone, as deployed.
+  env -u CITY_HALL_GITHUB_TOKEN -u CITY_HALL_GITHUB_ORG_TOKEN \
+    CITY_HALL_DB="$OUT/$1.city-hall.db" CITY_HALL_API_KEY="$KEY" CITY_HALL_LEASE_SECONDS="$2" \
+    PORT="$port" \
+    CITY_HALL_RUNNERS="[{\"id\":\"runner-a\",\"token\":\"$TOKEN_A\",\"tags\":[\"$CAPABILITY\"]},{\"id\":\"runner-b\",\"token\":\"$TOKEN_B\",\"tags\":[\"$CAPABILITY\"]},{\"id\":\"runner-x\",\"token\":\"$TOKEN_X\",\"tags\":[\"other-tag\"]}]" \
+    node "$CITY_HALL_DIR/dist/server/index.js" >"$OUT/$1.city-hall.log" 2>&1 &
   QUEUE_PID=$!
   PIDS+=("$QUEUE_PID")
   for _ in $(seq 100); do
@@ -126,8 +131,8 @@ start_queue() { # $1 scenario, $2 lease seconds
     kill -0 "$QUEUE_PID" 2>/dev/null || break
     sleep 0.1
   done
-  cat "$OUT/$1.job-queue.log" >&2
-  die "$1: job-queue did not start"
+  cat "$OUT/$1.city-hall.log" >&2
+  die "$1: city-hall did not start"
 }
 
 stop() { # pid...: stops each and drops it from PIDS, so cleanup never signals a reused pid
@@ -164,16 +169,16 @@ drive() { # $1 scenario, then driver options
     }
 }
 
-job() { # $1 scenario: job-queue's view of the scenario's job, as the source reads it
+job() { # $1 scenario: city-hall's view of the scenario's job, as the source reads it
   curl -fsS -H "Authorization: Bearer $KEY" "$E2E_CITY_HALL_URL/api/execute/jobs/$(cat "$OUT/$1.id")"
 }
 
 expect_job() { # $1 scenario, $2 JS expression over `j` (the GET body) that must be true
   local body
-  body=$(job "$1") || die "$1: could not read the job back from job-queue"
+  body=$(job "$1") || die "$1: could not read the job back from city-hall"
   printf '%s\n' "$body" >"$OUT/$1.job.json"
   node -e 'const j=JSON.parse(process.argv[1]);process.exit(eval(process.argv[2])?0:1)' "$body" "$2" ||
-    die "$1: job-queue's job does not satisfy \`$2\`: $body"
+    die "$1: city-hall's job does not satisfy \`$2\`: $body"
 }
 
 wait_log() { # $1 file, $2 fixed string, $3 seconds
@@ -211,7 +216,7 @@ for case in success:schema_miss max_turns:turn_cap budget:budget_cap crash:error
   pass "fake mode $mode: $kind"
 done
 
-# --- 3. outcomes job-queue requeues: the tracker sees unavailable, not a result -------------------
+# --- 3. outcomes city-hall requeues: the tracker sees unavailable, not a result -------------------
 for case in auth401:auth_failed limit:usage_limit; do
   mode=${case%%:*}
   kind=${case##*:}
@@ -264,7 +269,7 @@ pass "wrong capability tag: never claims (and a tagged runner then does)"
 # --- 5. lost lease (docket-runner#17) -------------------------------------------------------------
 # Runner A claims a slow Job and is frozen (SIGSTOP) past its 4 s lease; runner B takes the Job and
 # finishes it. When A thaws, its heartbeat is refused: it must stop its CLI and post nothing.
-# Only the outcome is asserted, not the job's status in between: job-queue requeues an expired
+# Only the outcome is asserted, not the job's status in between: city-hall requeues an expired
 # lease on its sweep timer and again, lazily, on the next claim, heartbeat or outcome call.
 start_queue lease 4
 start_runner lease-a "$TOKEN_A" slow 60000
