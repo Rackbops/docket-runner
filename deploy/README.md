@@ -12,14 +12,14 @@ operator edits; `rt render` derives the two files compose and the container read
 
 ## Where it runs
 
-The runner polls [Rackbops/job-queue](https://github.com/Rackbops/job-queue) (the `CITY_HALL_*` names are the shipped ones from when city-hall was the queue; they stay). In production both run on one host, each in its own stack, and both join an external Docker network named `docket`: the runner reaches the queue as `http://job-queue:8080`, the queue's container name, and never crosses the edge, so the Access pair can stay blank. Clients on other hosts reach the queue through its own Cloudflare Tunnel and Access; that sidecar lives in job-queue's stack, not here.
+The runner polls [Rackbops/city-hall](https://github.com/Rackbops/city-hall), the queue since 2026-10-09 ([Rackbops/job-queue](https://github.com/Rackbops/job-queue) before it). In production both run on one host, each in its own stack, and both join an external Docker network named `docket`: the runner reaches the queue as `http://city-hall:8510`, the queue's container name, and never crosses the edge, so the Access pair can stay blank. Clients on other hosts reach the queue through its own Cloudflare Tunnel and Access; that sidecar lives in city-hall's stack, not here.
 
 A runner on a host without the queue deletes the two `networks` blocks from `compose.yaml`, sets `CITY_HALL_URL` to the queue's public `https` hostname, and fills the `CF_ACCESS_*` pair.
 
 ## Bring-up
 
-1. `mkdir -p /opt/docket-runner/prod && cd /opt/docket-runner/prod`; copy the four files above into it (the stack directory's name becomes the compose project name: `docket-runner-prod`). If the host has no `docket` network yet (`docker network ls`), `docker network create docket`; job-queue's stack joins the same one.
-2. `claude setup-token` on any machine where you are logged in to Claude Code; paste the result as `CLAUDE_CODE_OAUTH_TOKEN`. Fill `CITY_HALL_URL` (`http://job-queue:8080` on the queue's host), `CITY_HALL_RUNNER_TOKEN` (the `token` of this runner's entry in the queue's `JOB_QUEUE_RUNNERS`), the `CF_ACCESS_*` pair only when going through the edge, and `IMAGE_TAG` (a published `x.y.z` or `sha-<7>`). `chmod 600 answers.env`.
+1. `mkdir -p /opt/docket-runner/prod && cd /opt/docket-runner/prod`; copy the four files above into it (the stack directory's name becomes the compose project name: `docket-runner-prod`). If the host has no `docket` network yet (`docker network ls`), `docker network create docket`; city-hall's stack joins the same one.
+2. `claude setup-token` on any machine where you are logged in to Claude Code; paste the result as `CLAUDE_CODE_OAUTH_TOKEN`. Fill `CITY_HALL_URL` (`http://city-hall:8510` on the queue's host), `CITY_HALL_RUNNER_TOKEN` (the `token` of this runner's entry in the queue's `CITY_HALL_RUNNERS`), the `CF_ACCESS_*` pair only when going through the edge, and `IMAGE_TAG` (a published `x.y.z` or `sha-<7>`). `chmod 600 answers.env`.
 3. `./rt render` -- refuses `ANTHROPIC_API_KEY`, `ANTHROPIC_AUTH_TOKEN` or `ANTHROPIC_BASE_URL` with exit 2.
 4. `./rt up` -- pulls the public image, starts the runner, waits for `/readyz`.
 5. `./rt health` -- shows the probe verdict (`auth.ok`), the CLI version and the loop state.

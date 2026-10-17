@@ -1,7 +1,7 @@
 // The tracker's side of the end-to-end check (test/e2e/run.sh). Runs under Bun, as the tracker
 // plugin does, and drives the tracker's real Executor from a rackbops-bot-plugins checkout
 // (plugins/tracker/src/executor.ts) with the real research type's Job (docket-types
-// `researchJob`), against a local Rackbops/job-queue, which serves the API that executor and this runner speak.
+// `researchJob`), against a local Rackbops/city-hall, which serves the API that executor and this runner speak.
 // Nothing here is imported from the runner's src/.
 //
 //   bun test/e2e/drive-tracker.ts <scenario> --expect pending|unavailable|result [options]
