@@ -1,8 +1,9 @@
 #!/usr/bin/env bash
 # The end-to-end check of the tracker's model lane (`just e2e`): the tracker plugin's executor
 # submits research Jobs to a real local Rackbops/city-hall, docket-runner claims them and runs the
-# fake CLI (test/fixtures/fake-claude.mjs), and the result goes back to the tracker. Everything
-# listens on 127.0.0.1; no model, no Claude credential, no network beyond the installs.
+# fake CLI (test/fixtures/fake-claude.mjs), and the result goes back to the tracker. Clients talk
+# over 127.0.0.1, though city-hall takes no host setting and binds every interface (throwaway keys,
+# a free port); no model, no Claude credential, no network beyond the installs.
 #
 #   CITY_HALL_DIR=<Rackbops/city-hall checkout> BOT_PLUGINS_DIR=<rackbops-bot-plugins checkout> \
 #     just e2e

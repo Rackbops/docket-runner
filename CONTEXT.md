@@ -34,7 +34,8 @@ seconds, posts nothing and counts it in `jobsAbandoned`.
 ## The end-to-end check
 
 `just e2e` (`test/e2e/run.sh`, driving `test/e2e/drive-tracker.ts` under Bun) runs the tracker's
-model lane across three repos on 127.0.0.1: the tracker plugin's real executor
+model lane across three repos, talking over 127.0.0.1 (city-hall itself takes no host setting
+and binds every interface, with throwaway keys): the tracker plugin's real executor
 (rackbops-bot-plugins `plugins/tracker/src/executor.ts`) submits research Jobs built by
 docket-types' `researchJob()` to a real Rackbops/city-hall (`node dist/server/index.js`, two runners
 tagged `claude-cli:subscription` and one tagged `other-tag`), this runner's `dist/` claims them
