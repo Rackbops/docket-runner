@@ -159,12 +159,42 @@ the end and spent subscription usage on a result city-hall would refuse.
 
 ## The tool ceiling
 
-`TOOL_CEILING` in `src/claude.ts` (`WebSearch`, `WebFetch`) is the most any run gets
-(docket-runner#23). `planTools` refuses a Job whose `allowedTools` names anything else, or an entry
+`TOOL_CEILING` in `src/claude.ts` (`WebSearch`, `WebFetch`, `mcp__firecrawl__firecrawl_search`,
+`mcp__firecrawl__firecrawl_scrape`) is the most any run gets (docket-runner#23). `planTools` refuses a Job whose `allowedTools` names anything else, or an entry
 the CLI would split in two (a comma or space outside a rule), and `runJob` posts that as an `error`
 without starting the CLI. `--tools` carries the effective list, so tools outside it do not exist in
 the run at all; `--strict-mcp-config` with no `--mcp-config` loads no MCP server. All three flags
 exist in the pinned CLI (2.1.296). Widening the ceiling is a reviewed change to that constant.
+The default tool lists (`DEFAULT_ALLOWED_TOOLS`, `DEFAULT_DISALLOWED_TOOLS` in `src/contract.ts`)
+are a separate thing, mirrors of docket-core's that `test/contract.test.ts` pins; the Firecrawl
+names are in the ceiling, not in those defaults.
+
+### Firecrawl
+
+`FIRECRAWL_API_KEY` (optional, a third-party key; not forbidden) turns on Firecrawl's hosted MCP
+server for a run, and only when the Job's `allowedTools` keeps a `mcp__firecrawl__` entry after
+its own denials. Then `buildArgs` adds `--mcp-config` with the inline JSON in
+`FIRECRAWL_MCP_CONFIG`: type `http`, `https://mcp.firecrawl.dev/v2/mcp`, and
+`Authorization: Bearer ${FIRECRAWL_API_KEY}`. The CLI expands `${VAR}` in a remote server's
+`headers` (code.claude.com/docs/en/mcp, "Environment variable expansion"; a name outside its
+blanked credential set expands as written), so `runJob` puts the key in the child's environment
+for that run only and strips it from every other run. The key is never in argv or a log, and
+`redact` hides any field whose name contains `key`.
+
+`--tools` does not filter MCP tools: with the server loaded, every Firecrawl tool exists unless
+denied. So a Firecrawl run also denies, by bare name, every out-of-ceiling tool Firecrawl's docs
+list (`FIRECRAWL_DENIED`: crawl, map, agent, interact, parse, ...), which removes them from the
+run; a tool Firecrawl adds later is not in `--allowedTools`, and print mode denies it. `--tools`
+carries the built-in names only. Proven on CLI 2.1.302 against a local fake MCP server
+(2026-10-18): `${FIRECRAWL_API_KEY}` in an inline `--mcp-config` reached the server as the
+bearer; the init event listed `firecrawl_crawl` under `--tools WebSearch` and not once denied; an
+unallowed MCP tool came back in `permission_denials`. Not proven on the pinned 2.1.296 or
+against Firecrawl itself.
+
+With no key, `planTools` drops the Firecrawl entries (the run goes on with the rest, possibly no
+tools at all) and `runJob` logs `warn` "FIRECRAWL_API_KEY is not set; running the Job without its
+Firecrawl tools" with the job id and the dropped names. `/v2/mcp-oauth` is Firecrawl's
+interactive sign-in variant; a headless runner cannot use it.
 
 ## Classification facts
 

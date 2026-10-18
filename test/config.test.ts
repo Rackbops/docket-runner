@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest"
 
 import { ConfigError, loadConfig } from "../src/config.js"
+import { makeLogger, redact } from "../src/log.js"
 import { buildSubprocessEnv } from "../src/subprocess-env.js"
 
 const good = {
@@ -49,6 +50,27 @@ describe("loadConfig", () => {
     expect(() => loadConfig({ ...good, CF_ACCESS_CLIENT_ID: "id" })).toThrow(/must be set together/)
     const c = loadConfig({ ...good, CF_ACCESS_CLIENT_ID: "id", CF_ACCESS_CLIENT_SECRET: "s" })
     expect(c.cfAccessClientSecret).toBe("s")
+  })
+})
+
+describe("FIRECRAWL_API_KEY", () => {
+  it("is optional: absent or blank leaves it unset, and it is not a forbidden variable", () => {
+    expect(loadConfig(good).firecrawlApiKey).toBeUndefined()
+    expect(loadConfig({ ...good, FIRECRAWL_API_KEY: "  " }).firecrawlApiKey).toBeUndefined()
+    expect(loadConfig({ ...good, FIRECRAWL_API_KEY: " fc-abc " }).firecrawlApiKey).toBe("fc-abc")
+  })
+
+  it("is redacted from a log line under either spelling", () => {
+    expect(redact({ firecrawlApiKey: "fc-abc", FIRECRAWL_API_KEY: "fc-abc", jobId: "j" })).toEqual({
+      firecrawlApiKey: "[redacted]",
+      FIRECRAWL_API_KEY: "[redacted]",
+      jobId: "j",
+    })
+    const lines: string[] = []
+    makeLogger((l) => lines.push(l))("info", "config", {
+      ...loadConfig({ ...good, FIRECRAWL_API_KEY: "fc-abc" }),
+    })
+    expect(lines.join("\n")).not.toContain("fc-abc")
   })
 })
 
