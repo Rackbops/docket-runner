@@ -34,12 +34,15 @@ seconds, posts nothing and counts it in `jobsAbandoned`.
 ## The end-to-end check
 
 `just e2e` (`test/e2e/run.sh`, driving `test/e2e/drive-tracker.ts` under Bun) runs the tracker's
-model lane across three repos on 127.0.0.1: the tracker plugin's real executor
+model lane across three repos, talking over 127.0.0.1 (city-hall itself takes no host setting
+and binds every interface, with throwaway keys): the tracker plugin's real executor
 (rackbops-bot-plugins `plugins/tracker/src/executor.ts`) submits research Jobs built by
-docket-types' `researchJob()` to a real Rackbops/job-queue (`node dist/index.js`, two runners
+docket-types' `researchJob()` to a real Rackbops/city-hall (`node dist/server/index.js`, two runners
 tagged `claude-cli:subscription` and one tagged `other-tag`), this runner's `dist/` claims them
-and runs the fake CLI, and the tracker reads the result back. job-queue serves the API the tracker's
-executor and this runner already speak (job-queue's README), so neither changes for it. Each
+and runs the fake CLI, and the tracker reads the result back. City-hall is the queue in production
+since 2026-10-09 (Rackbops/job-queue before it, retired on 2026-10-18) and
+serves the API the tracker's executor and this runner already speak, so neither changes for it.
+It runs with no GitHub token, so its issue source stays off, as deployed. Each
 scenario group gets a fresh queue (the wiring negatives share one) and is asserted on the tracker's answer, the queue's view
 of the job, and the runner's log; the first failure stops everything, exits non-zero and keeps the
 logs. It is not part of `just check`.
@@ -52,22 +55,23 @@ logs. It is not part of `just check`.
   claim 401; a runner without the capability tag never claims (and a tagged one then does);
 - lost lease (#17): runner A is frozen (SIGSTOP) past a 4 s lease, runner B finishes the Job, and
   on thawing A stops its CLI and posts nothing. Only the outcome is asserted, not the job's status
-  in between: job-queue requeues an expired lease on its sweep timer and again, lazily, on the
+  in between: city-hall requeues an expired lease on its sweep timer and again, lazily, on the
   next claim, heartbeat or outcome call.
 
-Run it (Node >= 24, pnpm, bun, git, curl and pgrep on PATH; no ANTHROPIC_* variable, which the
+Run it (Node >= 24, npx, pnpm, bun, git, curl and pgrep on PATH; no ANTHROPIC_* variable, which the
 script unsets anyway):
 
 ```sh
-git clone https://github.com/Rackbops/job-queue ../job-queue              # private
-git -C ../job-queue checkout 37823cc5bd47762b2034e12722ee1fead1d5ff38
+git clone https://github.com/Rackbops/city-hall ../city-hall              # private
+git -C ../city-hall checkout 4fc948a1c2598398cef81c46367c08f0f972489d
 git clone https://github.com/Rackbops/rackbops-bot-plugins ../bot-plugins
 git -C ../bot-plugins checkout 6f465f4825c12acd8c4b07bfa36efb091f3a87e4
-JOB_QUEUE_DIR=../job-queue BOT_PLUGINS_DIR=../bot-plugins just e2e
+CITY_HALL_DIR=../city-hall BOT_PLUGINS_DIR=../bot-plugins just e2e
 ```
 
-The script installs and builds job-queue in its checkout (`pnpm install --frozen-lockfile`,
-`pnpm run build`) and installs the plugins checkout (`bun install --frozen-lockfile`); `just e2e`
+The script installs and builds city-hall in its checkout with city-hall's own pnpm through npx
+(its `packageManager`, a different major from this repo's: `install --frozen-lockfile`, `run
+build`) and installs the plugins checkout (`bun install --frozen-lockfile`); `just e2e`
 builds this repo first. Logs go to `$E2E_OUT`, a new temp directory by default. It takes about 30
 seconds.
 
@@ -76,8 +80,9 @@ unless `E2E_ALLOW_UNPINNED=1`, and one with uncommitted changes always. To bump 
 `just e2e` against the new commit with `E2E_ALLOW_UNPINNED=1`, fix what it finds, then change the
 full 40-character SHA in `pins.env` in the same PR (and the clone commands above).
 
-job-queue's own `test/e2e/run.sh` is an adapted copy of this script that runs the same twelve
-scenarios from the queue's side, pinned to a docket-runner commit. It runs this repo's
+City-hall's own `test/e2e/run.sh` is an adapted copy of
+this script that runs the same twelve scenarios from the queue's side, pinned to a docket-runner
+commit. It runs this repo's
 `drive-tracker.ts`, so the driver's options and its `E2E_CITY_HALL_URL`, `E2E_CITY_HALL_KEY` and
 `E2E_CAPABILITY` variables are an interface to that script; a change to them or to a scenario
 here belongs there too.
@@ -89,41 +94,41 @@ tracker inside a running bot. `/readyz` on roshne's host is still the only proof
 ### In CI
 
 The `e2e` job in `.github/workflows/ci.yml` runs it on every pull request and push to `main`. It
-checks the three repos out side by side (`docket-runner/`, `job-queue/`, `bot-plugins/`; not
-nested, or job-queue's `pnpm install` would find this repo's `pnpm-workspace.yaml` above it), at
+checks the three repos out side by side (`docket-runner/`, `city-hall/`, `bot-plugins/`; not
+nested, or city-hall's `pnpm install` would find this repo's `pnpm-workspace.yaml` above it), at
 the SHAs it loads from `test/e2e/pins.env` into `$GITHUB_ENV`, sets up just, pnpm, Node 26 and
 Bun (the version in the plugins checkout's `package.json`), and runs `just install` and
 `just e2e`. It times out after 20 minutes. The third-party actions it uses (setup-just, pnpm,
 setup-bun) are pinned to full commit SHAs, with the tag in a comment.
 
 On failure the logs (`$E2E_OUT`) are uploaded as the `e2e-logs` artifact, kept for 3 days. This
-repo is public, so the artifact is too, and job-queue output is left out of it: its build log, its
+repo is public, so the artifact is too, and city-hall output is left out of it: its build log, its
 server logs, its databases, and the job reads and job ids (`*.job.json`, `*.id`). What is kept is
 this runner's logs, the tracker driver's output and the plugins install log. On a failure,
-`run.sh` still prints some job-queue output to the public job log: the queue's log when it fails
+`run.sh` still prints some city-hall output to the public job log: the queue's log when it fails
 to start, and the job read that failed an assertion. It is synthetic test data.
 
-Rackbops/job-queue is private. The job reads it with the repo secret `JOB_QUEUE_READ_TOKEN`: a
-fine-grained PAT whose resource owner is Rackbops, scoped to job-queue only, Contents read-only.
-It is used for the access probe and the job-queue checkout (with `persist-credentials: false`).
+Rackbops/city-hall is private. The job reads it with the repo secret `CITY_HALL_READ_TOKEN`: a
+fine-grained PAT whose resource owner is Rackbops, scoped to city-hall only, Contents read-only.
+It is used for the access probe and the city-hall checkout (with `persist-credentials: false`).
 It is not in `run.sh`'s environment, but any code in the job (including the three dependency
 trees) could still read it from the runner. The exposure is accepted: it is a read-only Contents
 token for one repo, and fork and Dependabot PRs get no secrets. Renovate branches are same-repo,
 so they do get it.
 
-The job probes access first: `GET /repos/Rackbops/job-queue/contents/package.json` with the
+The job probes access first: `GET /repos/Rackbops/city-hall/contents/package.json` with the
 token (`curl --retry 3 --retry-all-errors --max-time 20`), a Contents read, so a token without
 Contents skips here rather than failing at the checkout. When the secret is empty or the probe answers 401, 403 or 404,
 the job emits a warning annotation, writes the same line to the job summary, skips every later
 step, and stays **green**. A green `e2e` check is therefore not proof the end-to-end check ran:
 look at the job's annotations or summary. The warning reads
 
-- `JOB_QUEUE_READ_TOKEN cannot read Rackbops/job-queue (HTTP <code>; not scoped to job-queue with
+- `CITY_HALL_READ_TOKEN cannot read Rackbops/city-hall (HTTP <code>; not scoped to city-hall with
   Contents read-only, or awaiting approval if the Rackbops org requires it); end-to-end check
   skipped` -- GitHub answers 403 or 404 (an org policy that blocks fine-grained tokens is a 403);
-- `JOB_QUEUE_READ_TOKEN was refused (HTTP 401): expired or revoked; renew it; end-to-end check
+- `CITY_HALL_READ_TOKEN was refused (HTTP 401): expired or revoked; renew it; end-to-end check
   skipped` -- renew the token;
-- `JOB_QUEUE_READ_TOKEN is not available to this run (e.g. a fork or Dependabot PR, or the secret
+- `CITY_HALL_READ_TOKEN is not available to this run (e.g. a fork or Dependabot PR, or the secret
   is unset); end-to-end check skipped`.
 
 Anything else is a network or GitHub blip, not a missing token, and fails the job with an error
@@ -221,8 +226,8 @@ errors) and research-triage's `claudeAuth.ts` evidence, both as of 2026-09-26.
 container's environment) with compose's own quoting rules; `rt` wraps compose. `render` exits 1
 naming a missing required field and 2 on a forbidden key. Two stacks on one host get distinct
 compose projects from their directory names. `compose.yaml.example` joins the external `docket`
-network, as production does: job-queue's stack (on the same host) joins it too, so the runner
-reaches the queue at `http://job-queue:8080` without the edge; a runner on another host drops the
+network, as production does: city-hall's stack (on the same host) joins it too, so the runner
+reaches the queue at `http://city-hall:8510` without the edge; a runner on another host drops the
 `networks` blocks and uses the public hostname with the Access pair.
 
 ## Images
