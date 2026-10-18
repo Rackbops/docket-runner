@@ -40,6 +40,16 @@ test("splits the stack half from the container half and keeps the credential out
   assert.doesNotMatch(app, /IMAGE_TAG/)
 })
 
+test("carries FIRECRAWL_API_KEY into app.env only, blank by default", () => {
+  assert.match(render(good, { stackName: "prod" }).app, /^FIRECRAWL_API_KEY=$/m)
+  const { stack, app, warnings } = render(`${good}FIRECRAWL_API_KEY=fc-example\n`, {
+    stackName: "prod",
+  })
+  assert.equal(warnings.length, 0)
+  assert.match(app, /^FIRECRAWL_API_KEY=fc-example$/m)
+  assert.doesNotMatch(stack, /FIRECRAWL/)
+})
+
 test("drops an unknown key with a warning and validates the image tag", () => {
   const { warnings } = render(`${good}RETIRED_KEY=1\n`, { stackName: "prod" })
   assert.deepEqual(warnings, ["unknown key RETIRED_KEY dropped"])

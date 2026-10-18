@@ -8,7 +8,10 @@ import {
   classify,
   EXCERPT_CHARS,
   type Exec,
+  type ExecOptions,
   excerpt,
+  FIRECRAWL_DENIED,
+  FIRECRAWL_MCP_CONFIG,
   planTools,
   realExecutor,
   runJob,
@@ -82,8 +85,13 @@ describe("buildArgs", () => {
 })
 
 describe("the tool ceiling (docket-runner#23)", () => {
-  it("is the web read set", () => {
-    expect([...TOOL_CEILING]).toEqual(["WebSearch", "WebFetch"])
+  it("is the web read set plus Firecrawl's search and scrape, nothing else of Firecrawl's", () => {
+    expect([...TOOL_CEILING]).toEqual([
+      "WebSearch",
+      "WebFetch",
+      "mcp__firecrawl__firecrawl_search",
+      "mcp__firecrawl__firecrawl_scrape",
+    ])
   })
 
   it("gives a Job with no tools the ceiling, with the default denials", () => {
@@ -208,6 +216,130 @@ describe("the tool ceiling (docket-runner#23)", () => {
   })
 })
 
+describe("Firecrawl", () => {
+  const KEY = "fc-test-not-a-real-key-123"
+  const keyed = testConfig({ firecrawlApiKey: KEY })
+  const research = ["WebSearch", "WebFetch", "mcp__firecrawl__firecrawl_search"]
+  const fakeExec = (seen: ExecOptions[]) => async (opts: ExecOptions) => {
+    seen.push(opts)
+    return { exitCode: 0, stdout: '{"result":"ok"}', stderr: "", timedOut: false, durationMs: 1 }
+  }
+
+  it("loads the hosted server by inline config naming the variable, never the key", () => {
+    const args = buildArgs(parseJob(job({ allowedTools: research })), keyed)
+    expect(args).toContain("--strict-mcp-config")
+    const cfg = args[args.indexOf("--mcp-config") + 1] ?? ""
+    expect(cfg).toBe(FIRECRAWL_MCP_CONFIG)
+    expect(JSON.parse(cfg)).toEqual({
+      mcpServers: {
+        firecrawl: {
+          type: "http",
+          url: "https://mcp.firecrawl.dev/v2/mcp",
+          // biome-ignore lint/suspicious/noTemplateCurlyInString: the CLI expands it, not JS
+          headers: { Authorization: "Bearer ${FIRECRAWL_API_KEY}" },
+        },
+      },
+    })
+    expect(args.join(" ")).not.toContain(KEY)
+    // --tools carries built-ins only; the MCP tools are gated by --allowedTools and the denials.
+    expect(args[args.indexOf("--tools") + 1]).toBe("WebSearch,WebFetch")
+    expect(args[args.indexOf("--allowedTools") + 1]).toBe(research.join(","))
+    const denied = (args[args.indexOf("--disallowedTools") + 1] ?? "").split(",")
+    expect(denied).toContain("Bash")
+    for (const t of FIRECRAWL_DENIED) expect(denied).toContain(t)
+    expect(denied).toContain("mcp__firecrawl__firecrawl_crawl")
+    expect(denied).toContain("mcp__firecrawl__firecrawl_agent")
+    expect(denied).toContain("mcp__firecrawl__firecrawl_interact")
+    expect(denied).toContain("mcp__firecrawl__firecrawl_research_*")
+    expect(denied).toContain("mcp__firecrawl__firecrawl_research_read_paper")
+    expect(denied).toContain("mcp__firecrawl__firecrawl_monitor_*")
+    // A deny beats an allow: nothing may deny the whole server or the two allowed tools.
+    for (const d of denied) {
+      expect(d).not.toMatch(/^mcp__firecrawl(__\*?)?$/)
+      expect(research).not.toContain(d)
+      expect(d).not.toBe("mcp__firecrawl__firecrawl_scrape")
+    }
+  })
+
+  it("loads no MCP server when the key is set but the Job names no Firecrawl tool", () => {
+    const args = buildArgs(parseJob(job()), keyed)
+    expect(args).toContain("--strict-mcp-config")
+    expect(args).not.toContain("--mcp-config")
+    expect(args[args.indexOf("--disallowedTools") + 1]).not.toContain("firecrawl")
+  })
+
+  it("loads no MCP server when the Job denies its only Firecrawl tool", () => {
+    const plan = planTools(
+      { allowedTools: research, disallowedTools: ["mcp__firecrawl__firecrawl_search"] },
+      { firecrawlKey: true },
+    )
+    expect(plan.firecrawl).toBe(false)
+  })
+
+  it("drops the Firecrawl tools without the key and runs the rest", () => {
+    const plan = planTools(
+      { allowedTools: [...research, "mcp__firecrawl__firecrawl_scrape"] },
+      { firecrawlKey: false },
+    )
+    expect(plan.firecrawl).toBe(false)
+    expect(plan.allowed).toEqual(["WebSearch", "WebFetch"])
+    expect(plan.dropped).toEqual([
+      "mcp__firecrawl__firecrawl_search",
+      "mcp__firecrawl__firecrawl_scrape",
+    ])
+    const args = buildArgs(parseJob(job({ allowedTools: research })), config)
+    expect(args).not.toContain("--mcp-config")
+    expect(args[args.indexOf("--allowedTools") + 1]).toBe("WebSearch,WebFetch")
+  })
+
+  it("still refuses every other Firecrawl tool, key or not", () => {
+    for (const t of ["firecrawl_crawl", "firecrawl_agent", "firecrawl_interact", "firecrawl_map"]) {
+      expect(() =>
+        planTools({ allowedTools: [`mcp__firecrawl__${t}`] }, { firecrawlKey: true }),
+      ).toThrow(ToolCeilingError)
+    }
+    expect(() => planTools({ allowedTools: ["mcp__other__firecrawl_search"] })).toThrow(
+      ToolCeilingError,
+    )
+  })
+
+  it("hands the key to the CLI's environment only for a run that loads Firecrawl", async () => {
+    const seen: ExecOptions[] = []
+    process.env.FIRECRAWL_API_KEY = "from-the-process-env"
+    try {
+      await runJob(parseJob(job({ allowedTools: research })), keyed, fakeExec(seen))
+      await runJob(parseJob(job()), keyed, fakeExec(seen))
+      await runJob(parseJob(job({ allowedTools: research })), config, fakeExec(seen))
+    } finally {
+      delete process.env.FIRECRAWL_API_KEY
+    }
+    expect(seen.map((o) => o.env.FIRECRAWL_API_KEY)).toEqual([KEY, undefined, undefined])
+    for (const o of seen) expect(o.args.join(" ")).not.toContain(KEY)
+  })
+
+  it("runs a Job without its Firecrawl tools when no key is set, with a warning", async () => {
+    const seen: ExecOptions[] = []
+    const lines: { level: string; msg: string; fields?: Record<string, unknown> }[] = []
+    const result = await runJob(
+      parseJob(job({ allowedTools: ["mcp__firecrawl__firecrawl_scrape"] })),
+      config,
+      fakeExec(seen),
+      undefined,
+      (level, msg, fields) => lines.push({ level, msg, ...(fields ? { fields } : {}) }),
+    )
+    expect(result.kind).toBe("success")
+    expect(seen).toHaveLength(1)
+    expect(seen[0]?.args[(seen[0]?.args.indexOf("--tools") ?? 0) + 1]).toBe("")
+    expect(lines).toEqual([
+      {
+        level: "warn",
+        msg: "FIRECRAWL_API_KEY is not set; running the Job without its Firecrawl tools",
+        fields: { jobId: "occ-1", dropped: ["mcp__firecrawl__firecrawl_scrape"] },
+      },
+    ])
+  })
+})
+
 describe("runJob against the fake CLI", () => {
   it("succeeds and carries the envelope's telemetry", async () => {
     const { result } = await run("success")
@@ -324,6 +456,15 @@ describe("excerpt", () => {
       durationMs: 1,
     })
     expect(r.kind === "error" && r.detail).toContain("(no output)")
+  })
+})
+
+describe("a Firecrawl key in an excerpt", () => {
+  it("is scrubbed bare, and a short fc- word is left alone", () => {
+    const key = "fc-0123456789abcdef0123"
+    const quoted = excerpt(`config: key=${key}; ${key}. fc-short stays`)
+    expect(quoted).not.toContain(key)
+    expect(quoted).toBe("config: key=[redacted]; [redacted]. fc-short stays")
   })
 })
 

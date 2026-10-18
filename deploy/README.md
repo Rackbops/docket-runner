@@ -19,7 +19,7 @@ A runner on a host without the queue deletes the two `networks` blocks from `com
 ## Bring-up
 
 1. `mkdir -p /opt/docket-runner/prod && cd /opt/docket-runner/prod`; copy the four files above into it (the stack directory's name becomes the compose project name: `docket-runner-prod`). If the host has no `docket` network yet (`docker network ls`), `docker network create docket`; city-hall's stack joins the same one.
-2. `claude setup-token` on any machine where you are logged in to Claude Code; paste the result as `CLAUDE_CODE_OAUTH_TOKEN`. Fill `CITY_HALL_URL` (`http://city-hall:8510` on the queue's host), `CITY_HALL_RUNNER_TOKEN` (the `token` of this runner's entry in the queue's `CITY_HALL_RUNNERS`), the `CF_ACCESS_*` pair only when going through the edge, and `IMAGE_TAG` (a published `x.y.z` or `sha-<7>`). `chmod 600 answers.env`.
+2. `claude setup-token` on any machine where you are logged in to Claude Code; paste the result as `CLAUDE_CODE_OAUTH_TOKEN`. Fill `CITY_HALL_URL` (`http://city-hall:8510` on the queue's host), `CITY_HALL_RUNNER_TOKEN` (the `token` of this runner's entry in the queue's `CITY_HALL_RUNNERS`), the `CF_ACCESS_*` pair only when going through the edge, and `IMAGE_TAG` (a published `x.y.z` or `sha-<7>`). Optionally fill `FIRECRAWL_API_KEY` (a Firecrawl key, from firecrawl.dev) so research Jobs can use Firecrawl's search and scrape; left blank, those Jobs run without them and the runner logs a warning. `chmod 600 answers.env`.
 3. `./rt render` -- refuses `ANTHROPIC_API_KEY`, `ANTHROPIC_AUTH_TOKEN` or `ANTHROPIC_BASE_URL` with exit 2.
 4. `./rt up` -- pulls the public image, starts the runner, waits for `/readyz`.
 5. `./rt health` -- shows the probe verdict (`auth.ok`), the CLI version and the loop state.
@@ -27,6 +27,12 @@ A runner on a host without the queue deletes the two `networks` blocks from `com
 ## Updating
 
 `./rt set-image-tag <tag> && ./rt render && ./rt pull-and-recreate`. `restart: unless-stopped` never re-checks the registry, so publishing an image deploys nothing until this runs.
+
+First copy `render.mjs` (and `rt`) from `deploy/` at the release's tag over the stack's copies, keeping a backup. The image tag moves the container, not these host files, and a release that adds a setting (0.0.6's `FIRECRAWL_API_KEY`) needs the new `render.mjs`. With the old one, the stack comes up healthy but without the setting.
+
+## Firecrawl
+
+To turn Firecrawl on (or rotate its key) on a running stack: put the key in `answers.env` on the host as `FIRECRAWL_API_KEY=...`, then `./rt render && ./rt pull-and-recreate` (render writes it to `app.env` only, never `.env`). The runner talks to Firecrawl's hosted server at `https://mcp.firecrawl.dev/v2/mcp` with the key as a bearer header, and only for a Job that names a Firecrawl tool. Firecrawl's other endpoint, `/v2/mcp-oauth`, is not used: it needs an interactive browser sign-in, and the runner is headless.
 
 ## What never happens here
 

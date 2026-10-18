@@ -73,6 +73,7 @@ export const SCHEMA = [
   { key: "DEFAULT_MAX_TURNS", default: "8" },
   { key: "DEFAULT_MAX_BUDGET_USD", default: "0.50" },
   { key: "DEFAULT_MODEL", default: "" },
+  { key: "FIRECRAWL_API_KEY", default: "" },
   { key: "HEALTH_BIND", default: "0.0.0.0" },
   { key: "NODE_ENV", default: "production" },
   { key: "TZ", default: "America/New_York" },

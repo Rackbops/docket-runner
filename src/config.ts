@@ -28,6 +28,11 @@ export interface Config {
   defaultMaxTurns: number
   defaultMaxBudgetUsd: number
   defaultModel?: string
+  /**
+   * Firecrawl's API key (a third-party key, not an Anthropic one), for research Jobs that name a
+   * `mcp__firecrawl__` tool. Optional: without it those tools are dropped. Never logged or in argv.
+   */
+  firecrawlApiKey?: string
   healthPort: number
   healthBind: string
 }
@@ -91,5 +96,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
   }
   const model = env.DEFAULT_MODEL?.trim()
   if (model) config.defaultModel = model
+  const firecrawl = env.FIRECRAWL_API_KEY?.trim()
+  if (firecrawl) config.firecrawlApiKey = firecrawl
   return config
 }
