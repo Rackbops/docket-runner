@@ -155,10 +155,14 @@ export const FIRECRAWL_MCP_CONFIG = JSON.stringify({
   },
 })
 /**
- * Firecrawl tools outside the ceiling, denied by name whenever the server is loaded, so they do
- * not exist in the run (a bare MCP tool name in `--disallowedTools` removes it). A tool Firecrawl
- * adds later and this list misses still exists but is not in `--allowedTools`, and print mode
- * denies a tool it was not allowed. From docs.firecrawl.dev/mcp-server/tools, 2026-10-18.
+ * Firecrawl tools outside the ceiling, denied whenever the server is loaded, so they do not exist
+ * in the run (a bare MCP tool name in `--disallowedTools` removes it). The two documented
+ * families are denied by full-name glob, which removed every member on CLI 2.1.302, and their
+ * documented members by name besides, in case a CLI does not take the glob. Never
+ * `mcp__firecrawl__*` or bare `mcp__firecrawl`: a deny beats an allow, so either would take
+ * search and scrape too. A tool Firecrawl adds later and this list misses still exists but is not
+ * in `--allowedTools`, and print mode denies a tool it was not allowed. From
+ * docs.firecrawl.dev/mcp-server/tools, 2026-10-18.
  */
 export const FIRECRAWL_DENIED: readonly string[] = [
   "firecrawl_map",
@@ -174,6 +178,12 @@ export const FIRECRAWL_DENIED: readonly string[] = [
   "firecrawl_gov_search",
   "firecrawl_search_feedback",
   "firecrawl_feedback",
+  "firecrawl_research_*",
+  "firecrawl_research_search_papers",
+  "firecrawl_research_inspect_paper",
+  "firecrawl_research_read_paper",
+  "firecrawl_research_related_papers",
+  "firecrawl_monitor_*",
   "firecrawl_monitor_delete",
 ].map((t) => `${FIRECRAWL_TOOL_PREFIX}${t}`)
 
@@ -320,11 +330,12 @@ const RESET_RE = /resets? (?:at|in) ([^.]+)/i
 /** How much of the CLI's stdout or stderr a failure detail quotes. */
 export const EXCERPT_CHARS = 200
 /**
- * Credential shapes scrubbed from a quoted excerpt: Anthropic keys and tokens, and a bearer
+ * Credential shapes scrubbed from a quoted excerpt: Anthropic keys and tokens, a bare Firecrawl
+ * key (`fc-` and 16+ alphanumerics), and a bearer
  * followed by a token-length run (16+ non-space characters), so prose like "bearer of bad news"
  * is left alone.
  */
-const CREDENTIAL_RE = /sk-ant-[\w-]+|\bbearer\s+(?=\S{16,})\S+/gi
+const CREDENTIAL_RE = /sk-ant-[\w-]+|\bfc-[A-Za-z0-9]{16,}\b|\bbearer\s+(?=\S{16,})\S+/gi
 
 /**
  * A short, single-line quote of what the CLI wrote to stdout or stderr, so a failure detail says

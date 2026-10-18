@@ -184,7 +184,10 @@ for that run only and strips it from every other run. The key is never in argv o
 `--tools` does not filter MCP tools: with the server loaded, every Firecrawl tool exists unless
 denied. So a Firecrawl run also denies, by bare name, every out-of-ceiling tool Firecrawl's docs
 list (`FIRECRAWL_DENIED`: crawl, map, agent, interact, parse, ...), which removes them from the
-run; a tool Firecrawl adds later is not in `--allowedTools`, and print mode denies it. `--tools`
+run. The `firecrawl_research_*` and `firecrawl_monitor_*` families are denied by full-name glob
+(proven on 2.1.302: the glob removed every member and left search and scrape) and their documented
+members by name besides, in case the pinned CLI does not take the glob. Never `mcp__firecrawl__*`
+or bare `mcp__firecrawl`: a deny beats an allow and would take search and scrape too; a tool Firecrawl adds later is not in `--allowedTools`, and print mode denies it. `--tools`
 carries the built-in names only. Proven on CLI 2.1.302 against a local fake MCP server
 (2026-10-18): `${FIRECRAWL_API_KEY}` in an inline `--mcp-config` reached the server as the
 bearer; the init event listed `firecrawl_crawl` under `--tools WebSearch` and not once denied; an
@@ -205,7 +208,8 @@ as `resetsAt`; `subtype: error_max_turns` is `turn_cap`; "Budget limit" is `budg
 JSON envelope at all is `error`, and its detail quotes stdout and stderr through `excerpt()`, so
 it says what came back instead of "(no output)". `excerpt()` keeps the first 200 characters, then
 a `... (N chars)` marker naming the full length; it is one line, ASCII, with `sk-ant-` shapes and
-a bearer followed by a 16+ character token redacted. Stderr goes through it in every detail, the
+a bearer followed by a 16+ character token redacted, and a bare Firecrawl key (`fc-` and 16+
+alphanumerics) too. Stderr goes through it in every detail, the
 auth, limit and cap branches too. A Job with a schema and no `structured_output` (and a `result`
 that is not JSON) is `schema_miss`. Sources: code.claude.com/docs (headless, cli-reference,
 errors) and research-triage's `claudeAuth.ts` evidence, both as of 2026-09-26.

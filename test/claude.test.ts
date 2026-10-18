@@ -250,6 +250,15 @@ describe("Firecrawl", () => {
     expect(denied).toContain("mcp__firecrawl__firecrawl_crawl")
     expect(denied).toContain("mcp__firecrawl__firecrawl_agent")
     expect(denied).toContain("mcp__firecrawl__firecrawl_interact")
+    expect(denied).toContain("mcp__firecrawl__firecrawl_research_*")
+    expect(denied).toContain("mcp__firecrawl__firecrawl_research_read_paper")
+    expect(denied).toContain("mcp__firecrawl__firecrawl_monitor_*")
+    // A deny beats an allow: nothing may deny the whole server or the two allowed tools.
+    for (const d of denied) {
+      expect(d).not.toMatch(/^mcp__firecrawl(__\*?)?$/)
+      expect(research).not.toContain(d)
+      expect(d).not.toBe("mcp__firecrawl__firecrawl_scrape")
+    }
   })
 
   it("loads no MCP server when the key is set but the Job names no Firecrawl tool", () => {
@@ -447,6 +456,15 @@ describe("excerpt", () => {
       durationMs: 1,
     })
     expect(r.kind === "error" && r.detail).toContain("(no output)")
+  })
+})
+
+describe("a Firecrawl key in an excerpt", () => {
+  it("is scrubbed bare, and a short fc- word is left alone", () => {
+    const key = "fc-0123456789abcdef0123"
+    const quoted = excerpt(`config: key=${key}; ${key}. fc-short stays`)
+    expect(quoted).not.toContain(key)
+    expect(quoted).toBe("config: key=[redacted]; [redacted]. fc-short stays")
   })
 })
 
