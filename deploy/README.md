@@ -28,6 +28,8 @@ A runner on a host without the queue deletes the two `networks` blocks from `com
 
 `./rt set-image-tag <tag> && ./rt render && ./rt pull-and-recreate`. `restart: unless-stopped` never re-checks the registry, so publishing an image deploys nothing until this runs.
 
+First copy `render.mjs` (and `rt`) from `deploy/` at the release's tag over the stack's copies, keeping a backup. The image tag moves the container, not these host files, and a release that adds a setting (0.0.6's `FIRECRAWL_API_KEY`) needs the new `render.mjs`. With the old one, the stack comes up healthy but without the setting.
+
 ## Firecrawl
 
 To turn Firecrawl on (or rotate its key) on a running stack: put the key in `answers.env` on the host as `FIRECRAWL_API_KEY=...`, then `./rt render && ./rt pull-and-recreate` (render writes it to `app.env` only, never `.env`). The runner talks to Firecrawl's hosted server at `https://mcp.firecrawl.dev/v2/mcp` with the key as a bearer header, and only for a Job that names a Firecrawl tool. Firecrawl's other endpoint, `/v2/mcp-oauth`, is not used: it needs an interactive browser sign-in, and the runner is headless.
