@@ -156,7 +156,7 @@ export class Loop {
 
     let result: JobResult
     try {
-      result = await runJob(job, config, this.deps.execute, lease.signal)
+      result = await runJob(job, config, this.deps.execute, lease.signal, log)
     } finally {
       running = false
       clearInterval(beat)

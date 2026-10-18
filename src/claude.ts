@@ -8,6 +8,7 @@ import {
   type JobFailure,
   type JobResult,
 } from "./contract.js"
+import type { Logger } from "./log.js"
 import { buildSubprocessEnv } from "./subprocess-env.js"
 
 /**
@@ -122,7 +123,71 @@ export const realExecutor: Executor = ({
  * stolen source key upstream cannot hand a run the shell beside the subscription token. Widening
  * it is a change to this file, reviewed like any other.
  */
-export const TOOL_CEILING: readonly string[] = ["WebSearch", "WebFetch"]
+export const TOOL_CEILING: readonly string[] = [
+  "WebSearch",
+  "WebFetch",
+  "mcp__firecrawl__firecrawl_search",
+  "mcp__firecrawl__firecrawl_scrape",
+]
+
+/**
+ * Firecrawl's hosted MCP server, API-key form: the key goes as a bearer on `/v2/mcp`
+ * (docs.firecrawl.dev/mcp-server/keyless, "Add an API key"). `/v2/mcp-oauth` is the interactive
+ * sign-in variant and needs a browser, so a headless runner never uses it. BoardGameGeek's
+ * robots.txt blocks ClaudeBot, so WebFetch gets 403 there; Firecrawl fetches as FirecrawlAgent.
+ */
+export const FIRECRAWL_MCP_URL = "https://mcp.firecrawl.dev/v2/mcp"
+/** The prefix every Firecrawl tool carries in the run: `mcp__<server>__<tool>`. */
+export const FIRECRAWL_TOOL_PREFIX = "mcp__firecrawl__"
+/**
+ * The inline `--mcp-config`. It names the variable, never the key: the CLI expands `${VAR}` in a
+ * remote server's headers from its own environment, so the key reaches the CLI through the child
+ * environment and is never in argv or a log.
+ */
+export const FIRECRAWL_MCP_CONFIG = JSON.stringify({
+  mcpServers: {
+    firecrawl: {
+      type: "http",
+      url: FIRECRAWL_MCP_URL,
+      // biome-ignore lint/suspicious/noTemplateCurlyInString: the CLI expands it, not JS
+      headers: { Authorization: "Bearer ${FIRECRAWL_API_KEY}" },
+    },
+  },
+})
+/**
+ * Firecrawl tools outside the ceiling, denied whenever the server is loaded, so they do not exist
+ * in the run (a bare MCP tool name in `--disallowedTools` removes it). The two documented
+ * families are denied by full-name glob, which removed every member on CLI 2.1.302, and their
+ * documented members by name besides, in case a CLI does not take the glob. Never
+ * `mcp__firecrawl__*` or bare `mcp__firecrawl`: a deny beats an allow, so either would take
+ * search and scrape too. A tool Firecrawl adds later and this list misses still exists but is not
+ * in `--allowedTools`, and print mode denies a tool it was not allowed. From
+ * docs.firecrawl.dev/mcp-server/tools, 2026-10-18.
+ */
+export const FIRECRAWL_DENIED: readonly string[] = [
+  "firecrawl_map",
+  "firecrawl_find_tools",
+  "firecrawl_parse",
+  "firecrawl_crawl",
+  "firecrawl_check_crawl_status",
+  "firecrawl_agent",
+  "firecrawl_agent_status",
+  "firecrawl_interact",
+  "firecrawl_interact_stop",
+  "firecrawl_developer_search",
+  "firecrawl_gov_search",
+  "firecrawl_search_feedback",
+  "firecrawl_feedback",
+  "firecrawl_research_*",
+  "firecrawl_research_search_papers",
+  "firecrawl_research_inspect_paper",
+  "firecrawl_research_read_paper",
+  "firecrawl_research_related_papers",
+  "firecrawl_monitor_*",
+  "firecrawl_monitor_delete",
+].map((t) => `${FIRECRAWL_TOOL_PREFIX}${t}`)
+
+const isFirecrawl = (entry: string): boolean => toolName(entry).startsWith(FIRECRAWL_TOOL_PREFIX)
 
 /** A Job named a tool outside `TOOL_CEILING`; the Job is refused before the CLI starts. */
 export class ToolCeilingError extends Error {
@@ -142,12 +207,21 @@ export interface ToolPlan {
   allowed: string[]
   /** `--disallowedTools`: the default shell and file denials, plus whatever the Job adds. */
   disallowed: string[]
+  /** True when the run loads Firecrawl's MCP server (`--mcp-config`). */
+  firecrawl: boolean
+  /** Firecrawl entries the Job asked for and the run goes without: no `FIRECRAWL_API_KEY`. */
+  dropped: string[]
+}
+
+export interface ToolOptions {
+  /** Whether `FIRECRAWL_API_KEY` is configured. Without it, Firecrawl entries are dropped. */
+  firecrawlKey?: boolean
 }
 
 const unique = (xs: readonly string[]): string[] => [...new Set(xs)]
 
 /** One tool name, optionally one rule in parentheses with no comma, space or nested paren. */
-const SINGLE_ENTRY_RE = /^[A-Za-z]+(\([^()\s,]*\))?$/
+const SINGLE_ENTRY_RE = /^[A-Za-z_]+(\([^()\s,]*\))?$/
 /** How many refused entries a refusal names (each cut to 40 characters). */
 const MAX_NAMED = 5
 
@@ -156,14 +230,21 @@ const MAX_NAMED = 5
  * tool outside it. A Job with no `allowedTools` gets the ceiling's defaults; `disallowedTools`
  * always keeps the default denials, which a Job can add to but not remove. A tool the Job denies
  * outright (a bare name, not a rule) is left out of `tools` too.
+ *
+ * Firecrawl entries need the key: without `firecrawlKey` they are dropped (named in `dropped`,
+ * the run goes on without them), and with it the run loads the server only when an entry
+ * survives. `tools` carries built-in names only; `--tools` does not filter MCP tools.
  */
-export function planTools(job: Pick<Job, "allowedTools" | "disallowedTools">): ToolPlan {
-  const allowed = job.allowedTools ?? [...DEFAULT_ALLOWED_TOOLS]
+export function planTools(
+  job: Pick<Job, "allowedTools" | "disallowedTools">,
+  { firecrawlKey = false }: ToolOptions = {},
+): ToolPlan {
+  const asked = job.allowedTools ?? [...DEFAULT_ALLOWED_TOOLS]
   // The CLI splits an --allowedTools value on commas and spaces, so an entry must be exactly one
   // tool, or one tool with a rule that holds neither: `WebFetch(x),Bash` would otherwise pass
   // the name check here and reach the CLI as two entries.
   const outside = unique(
-    allowed.filter((e) => !SINGLE_ENTRY_RE.test(e) || !TOOL_CEILING.includes(toolName(e))),
+    asked.filter((e) => !SINGLE_ENTRY_RE.test(e) || !TOOL_CEILING.includes(toolName(e))),
   )
   if (outside.length > 0) {
     const shown = outside.slice(0, MAX_NAMED).map((e) => JSON.stringify(e.slice(0, 40)))
@@ -172,28 +253,46 @@ export function planTools(job: Pick<Job, "allowedTools" | "disallowedTools">): T
       `the Job asks for tools outside the runner's ceiling (${TOOL_CEILING.join(", ")}): ${shown.join(", ")}${more}`,
     )
   }
-  const disallowed = unique([...DEFAULT_DISALLOWED_TOOLS, ...(job.disallowedTools ?? [])])
-  const deniedOutright = new Set(disallowed.filter((e) => !e.includes("(")).map((e) => e.trim()))
-  const tools = unique(allowed.map(toolName)).filter((name) => !deniedOutright.has(name))
-  return { tools, allowed, disallowed }
+  const dropped = firecrawlKey ? [] : unique(asked.filter(isFirecrawl))
+  const allowed = firecrawlKey ? asked : asked.filter((e) => !isFirecrawl(e))
+  const jobDenied = unique([...DEFAULT_DISALLOWED_TOOLS, ...(job.disallowedTools ?? [])])
+  const deniedOutright = new Set(jobDenied.filter((e) => !e.includes("(")).map((e) => e.trim()))
+  const names = unique(allowed.map(toolName)).filter((name) => !deniedOutright.has(name))
+  const firecrawl = names.some((n) => n.startsWith(FIRECRAWL_TOOL_PREFIX))
+  const tools = names.filter((n) => !n.startsWith("mcp__"))
+  const disallowed = firecrawl ? unique([...jobDenied, ...FIRECRAWL_DENIED]) : jobDenied
+  return { tools, allowed, disallowed, firecrawl, dropped }
+}
+
+/** The Job's tool plan under this runner's configuration. */
+export function planFor(
+  job: Pick<Job, "allowedTools" | "disallowedTools">,
+  config: Config,
+): ToolPlan {
+  return planTools(job, { firecrawlKey: config.firecrawlApiKey !== undefined })
 }
 
 /**
  * The CLI arguments for a Job. Pure, so the flag set is unit-tested without a process. Throws
  * `ToolCeilingError` for a Job outside the tool ceiling (`runJob` turns that into a failure).
  */
-export function buildArgs(job: Job, config: Config): string[] {
-  const plan = planTools(job)
+export function buildArgs(
+  job: Job,
+  config: Config,
+  plan: ToolPlan = planFor(job, config),
+): string[] {
   const args = ["-p", "--output-format", "json"]
   const model = job.model ?? config.defaultModel
   if (model) args.push("--model", model)
   args.push("--max-turns", String(job.maxTurns ?? config.defaultMaxTurns))
   args.push("--max-budget-usd", String(job.maxBudgetUsd ?? config.defaultMaxBudgetUsd))
   // --tools is what exists in the run at all: anything not named (Read, Glob, Bash, ...) is gone,
-  // not merely unapproved. "" means no tools. --strict-mcp-config with no --mcp-config loads no
-  // MCP server from any settings file the CLI might find.
+  // not merely unapproved. "" means no built-in tools. --strict-mcp-config loads no MCP server
+  // from any settings file the CLI might find; --mcp-config adds Firecrawl's, and only when the
+  // key is set and the Job kept a Firecrawl tool. The config names the variable, not the key.
   args.push("--tools", plan.tools.join(","))
   args.push("--strict-mcp-config")
+  if (plan.firecrawl) args.push("--mcp-config", FIRECRAWL_MCP_CONFIG)
   if (plan.allowed.length > 0) args.push("--allowedTools", plan.allowed.join(","))
   args.push("--disallowedTools", plan.disallowed.join(","))
   if (job.jsonSchema) args.push("--json-schema", JSON.stringify(job.jsonSchema))
@@ -231,11 +330,12 @@ const RESET_RE = /resets? (?:at|in) ([^.]+)/i
 /** How much of the CLI's stdout or stderr a failure detail quotes. */
 export const EXCERPT_CHARS = 200
 /**
- * Credential shapes scrubbed from a quoted excerpt: Anthropic keys and tokens, and a bearer
+ * Credential shapes scrubbed from a quoted excerpt: Anthropic keys and tokens, a bare Firecrawl
+ * key (`fc-` and 16+ alphanumerics), and a bearer
  * followed by a token-length run (16+ non-space characters), so prose like "bearer of bad news"
  * is left alone.
  */
-const CREDENTIAL_RE = /sk-ant-[\w-]+|\bbearer\s+(?=\S{16,})\S+/gi
+const CREDENTIAL_RE = /sk-ant-[\w-]+|\bfc-[A-Za-z0-9]{16,}\b|\bbearer\s+(?=\S{16,})\S+/gi
 
 /**
  * A short, single-line quote of what the CLI wrote to stdout or stderr, so a failure detail says
@@ -328,21 +428,37 @@ export async function runJob(
   config: Config,
   execute: Executor = realExecutor,
   signal?: AbortSignal,
+  log?: Logger,
 ): Promise<JobResult> {
+  let plan: ToolPlan
   let args: string[]
   try {
-    args = buildArgs(job, config)
+    plan = planFor(job, config)
+    args = buildArgs(job, config, plan)
   } catch (err) {
     if (!(err instanceof ToolCeilingError)) throw err
     return { kind: "error", detail: err.message.slice(0, 500), durationMs: 0 }
   }
+  if (plan.dropped.length > 0) {
+    log?.("warn", "FIRECRAWL_API_KEY is not set; running the Job without its Firecrawl tools", {
+      jobId: job.id,
+      dropped: plan.dropped,
+    })
+  }
+  // The key reaches the CLI only for a run that loads Firecrawl; every other run goes without it.
+  const env: NodeJS.ProcessEnv = {
+    ...buildSubprocessEnv(),
+    CLAUDE_CODE_OAUTH_TOKEN: config.claudeCodeOauthToken,
+  }
+  delete env.FIRECRAWL_API_KEY
+  if (plan.firecrawl && config.firecrawlApiKey) env.FIRECRAWL_API_KEY = config.firecrawlApiKey
   const exec = await execute({
     ...(signal ? { signal } : {}),
     bin: config.claudeBin,
     args,
     stdin: job.prompt,
     timeoutMs: job.timeoutMs ?? config.claudeTimeoutMs,
-    env: { ...buildSubprocessEnv(), CLAUDE_CODE_OAUTH_TOKEN: config.claudeCodeOauthToken },
+    env,
   })
   return classify(job, exec)
 }
