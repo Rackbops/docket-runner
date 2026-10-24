@@ -450,7 +450,6 @@ export async function runJob(
     ...buildSubprocessEnv(),
     CLAUDE_CODE_OAUTH_TOKEN: config.claudeCodeOauthToken,
   }
-  delete env.FIRECRAWL_API_KEY
   if (plan.firecrawl && config.firecrawlApiKey) env.FIRECRAWL_API_KEY = config.firecrawlApiKey
   const exec = await execute({
     ...(signal ? { signal } : {}),
