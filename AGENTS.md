@@ -20,7 +20,8 @@ needs to know about the code in this repo.
 **Every model call runs on the subscription through `claude -p`; an API key is forbidden.**
 Three layers enforce it and all three stay: `deploy/render.mjs` exits 2 on
 `ANTHROPIC_API_KEY`, `ANTHROPIC_AUTH_TOKEN` or `ANTHROPIC_BASE_URL`; `loadConfig` refuses to
-start with any of them present; `buildSubprocessEnv` strips them from every CLI call. Never add
+start with any of them present; `buildSubprocessEnv` builds every CLI call's environment from an allowlist that leaves them
+out (and the runner's own secrets with them). Never add
 an `ANTHROPIC_*` variable, an SDK dependency, or a `--bare` flag (it never reads the OAuth token).
 
 ## What this process is, and is not

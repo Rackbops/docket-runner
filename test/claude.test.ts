@@ -317,6 +317,29 @@ describe("Firecrawl", () => {
     for (const o of seen) expect(o.args.join(" ")).not.toContain(KEY)
   })
 
+  it("never hands a run the queue token, the Access secret or an unlisted variable (#37)", async () => {
+    const seen: ExecOptions[] = []
+    const planted = {
+      CITY_HALL_RUNNER_TOKEN: "runner-secret",
+      CF_ACCESS_CLIENT_SECRET: "cf-secret",
+      CLAUDE_CODE_USE_BEDROCK: "1",
+      SOME_UNLISTED_VAR: "x",
+    }
+    Object.assign(process.env, planted)
+    try {
+      await runJob(parseJob(job({ allowedTools: research })), keyed, fakeExec(seen))
+      await runJob(parseJob(job()), config, fakeExec(seen))
+    } finally {
+      for (const k of Object.keys(planted)) delete process.env[k]
+    }
+    expect(seen).toHaveLength(2)
+    for (const o of seen) {
+      for (const k of Object.keys(planted)) expect(o.env[k]).toBeUndefined()
+      expect(o.env.CLAUDE_CODE_OAUTH_TOKEN).toBe(config.claudeCodeOauthToken)
+      expect(o.env.PATH).toBe(process.env.PATH)
+    }
+  })
+
   it("runs a Job without its Firecrawl tools when no key is set, with a warning", async () => {
     const seen: ExecOptions[] = []
     const lines: { level: string; msg: string; fields?: Record<string, unknown> }[] = []
@@ -357,7 +380,7 @@ describe("runJob against the fake CLI", () => {
     expect(result.kind).toBe("success")
     // The fake sees the env the runner built; a leak would be invisible here, so assert on the builder too.
     const { buildSubprocessEnv } = await import("../src/subprocess-env.js")
-    expect(buildSubprocessEnv({ ANTHROPIC_API_KEY: "x", KEEP: "y" })).toEqual({ KEEP: "y" })
+    expect(buildSubprocessEnv({ ANTHROPIC_API_KEY: "x", PATH: "/bin" })).toEqual({ PATH: "/bin" })
   })
 
   it("returns structured output when the Job carried a schema", async () => {

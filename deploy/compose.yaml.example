@@ -39,6 +39,13 @@ services:
     # Restarts the same image it was created from and never re-checks the registry: publishing an
     # image deploys nothing. `rt pull-and-recreate` is the deploy.
     restart: unless-stopped
+    # On SIGTERM the runner finishes the Job in hand and posts its outcome before it exits (#38).
+    # Docker's default is 10 s before SIGKILL, which killed any run in progress on every deploy and
+    # left the Job to run again. 660 s covers the longest timeout the tracker's Jobs carry (research
+    # and scout, 600 s, docket-types) plus the CLI's kill grace and the outcome post and its retries,
+    # while the queue answers (deploy/README.md). An idle runner exits within its current sleep, so
+    # this only lengthens a deploy that lands mid-run.
+    stop_grace_period: 660s
     networks: [docket]
 
 volumes:

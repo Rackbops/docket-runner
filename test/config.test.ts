@@ -75,7 +75,7 @@ describe("FIRECRAWL_API_KEY", () => {
 })
 
 describe("buildSubprocessEnv", () => {
-  it("strips the three forbidden variables and keeps the rest", () => {
+  it("keeps only the allowlisted names, so no forbidden variable gets through", () => {
     const env = buildSubprocessEnv({
       ANTHROPIC_API_KEY: "k",
       ANTHROPIC_AUTH_TOKEN: "a",
@@ -84,5 +84,33 @@ describe("buildSubprocessEnv", () => {
       HOME: "/h",
     })
     expect(env).toEqual({ PATH: "/bin", HOME: "/h" })
+  })
+
+  it("drops the runner's own secrets, other routes off the subscription and unlisted names (#37)", () => {
+    const env = buildSubprocessEnv({
+      PATH: "/bin",
+      LC_ALL: "C.UTF-8",
+      NODE_ENV: "production",
+      TZ: "America/New_York",
+      HTTPS_PROXY: "http://proxy:3128",
+      CITY_HALL_RUNNER_TOKEN: "runner-secret",
+      CF_ACCESS_CLIENT_ID: "id",
+      CF_ACCESS_CLIENT_SECRET: "cf-secret",
+      FIRECRAWL_API_KEY: "fc-secret",
+      CLAUDE_CODE_OAUTH_TOKEN: "oauth",
+      CLAUDE_CODE_USE_BEDROCK: "1",
+      CLAUDE_CODE_USE_VERTEX: "1",
+      ANTHROPIC_CUSTOM_HEADERS: "x: y",
+      ANTHROPIC_BEDROCK_BASE_URL: "https://b",
+      ANTHROPIC_VERTEX_BASE_URL: "https://v",
+      SOME_UNLISTED_VAR: "x",
+    })
+    expect(env).toEqual({
+      PATH: "/bin",
+      LC_ALL: "C.UTF-8",
+      NODE_ENV: "production",
+      TZ: "America/New_York",
+      HTTPS_PROXY: "http://proxy:3128",
+    })
   })
 })

@@ -4,8 +4,8 @@
  * render.mjs, cut down to this runner's schema: a CLOSED allowlist (an unknown key is dropped
  * with a warning, never fatal), `required` fields that fail loudly by name (exit 1), and the
  * FORBIDDEN keys that make render exit 2 -- the first of three layers keeping every `claude -p`
- * run on the subscription (loadConfig refuses them at boot, buildSubprocessEnv strips them per
- * call).
+ * run on the subscription (loadConfig refuses them at boot, and buildSubprocessEnv's allowlist
+ * leaves them out of every call).
  *
  * Value rules match compose's env-file parser: surrounding quotes are notation, an unquoted value
  * ends at ` #`, a rendered value with whitespace, #, $, " or \ is written single-quoted, and a

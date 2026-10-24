@@ -33,6 +33,21 @@ describe("AuthProbe", () => {
     expect(calls).toHaveLength(2)
   })
 
+  it("probes without the Firecrawl key or the queue token in its environment (#37)", async () => {
+    const { execute, calls } = fakeExec([{ exitCode: 0 }])
+    process.env.FIRECRAWL_API_KEY = "fc-secret"
+    process.env.CITY_HALL_RUNNER_TOKEN = "runner-secret"
+    try {
+      await new AuthProbe(testConfig(), execute).check()
+    } finally {
+      delete process.env.FIRECRAWL_API_KEY
+      delete process.env.CITY_HALL_RUNNER_TOKEN
+    }
+    expect(calls[0]?.env.FIRECRAWL_API_KEY).toBeUndefined()
+    expect(calls[0]?.env.CITY_HALL_RUNNER_TOKEN).toBeUndefined()
+    expect(calls[0]?.env.CLAUDE_CODE_OAUTH_TOKEN).toBe("test-token")
+  })
+
   it("reports a 401 with its reason and re-probes after five minutes", async () => {
     let now = 5_000_000
     const { execute, calls } = fakeExec([
