@@ -36,4 +36,10 @@ To turn Firecrawl on (or rotate its key) on a running stack: put the key in `ans
 
 ## What never happens here
 
-The image carries no credential; `CLAUDE_CODE_OAUTH_TOKEN` arrives through `app.env` at run time and is stripped from nothing else. No `ANTHROPIC_*` variable is accepted at render, at boot, or in the child environment of any CLI call. The stack half (`.env`) never enters the container.
+The image carries no credential; `CLAUDE_CODE_OAUTH_TOKEN` arrives through `app.env` at run time. `ANTHROPIC_API_KEY`, `ANTHROPIC_AUTH_TOKEN` and `ANTHROPIC_BASE_URL` are refused at render (exit 2) and at boot. The child environment of every CLI call is built from an allowlist (`src/subprocess-env.ts`: `PATH`, `HOME`, locale, `TZ`, the proxy names, `NODE_*`), plus the OAuth token, plus the Firecrawl key only for a run that loads Firecrawl. So no `ANTHROPIC_*` or `CLAUDE_CODE_USE_*` variable, the runner token and the Access secret never reach a run. The stack half (`.env`) never enters the container.
+
+One route off the subscription is outside the runner's reach: the CLI reads `~/.claude/settings.json` from the `claude-home` volume, and an `env` block or an `apiKeyHelper` there would apply to every run (code.claude.com/docs/en/settings, checked 2026-10-24). The runner never writes that file. Don't put one there; if the volume ever holds one, read it before the next deploy.
+
+## Stopping and deploying mid-run
+
+`compose.yaml.example` sets `stop_grace_period: 660s`: on SIGTERM the runner finishes the Job in hand and posts its outcome, and the longest Job timeout the tracker sends is 600 s. An idle runner stops at once. A stack whose `compose.yaml` was copied before this setting has Docker's 10 s default, which kills a run in progress on every `pull-and-recreate`; copy the new example over it (keeping a backup) to pick it up.
