@@ -1,5 +1,5 @@
 import type { Config } from "./config.js"
-import { type Job, type JobResult, parseJob } from "./contract.js"
+import { ContractError, type Job, type JobResult, parseJob } from "./contract.js"
 
 /**
  * The execute-lane API the runner calls on city-hall, merged there by pull request
@@ -53,6 +53,26 @@ export function makeCityHallClient(
       body: JSON.stringify(body),
     })
 
+  /** Best effort: tells city-hall why a leased Job it sent cannot be run. Never throws. */
+  const rejectInvalid = async (raw: unknown, err: ContractError): Promise<void> => {
+    if (typeof raw !== "object" || raw === null) return
+    const { id, lease } = raw as { id?: unknown; lease?: { token?: unknown } | null }
+    const token = lease?.token
+    if (typeof id !== "string" || id === "" || typeof token !== "string" || token === "") return
+    try {
+      await post(`/api/execute/jobs/${encodeURIComponent(id)}/outcome`, {
+        leaseToken: token,
+        result: {
+          kind: "error",
+          detail: `invalid Job: ${err.message}`.slice(0, 500),
+          durationMs: 0,
+        },
+      })
+    } catch {
+      // The lease expiring is the fallback, as before.
+    }
+  }
+
   return {
     async claim() {
       const res = await post("/api/execute/claim", {})
@@ -61,7 +81,14 @@ export function makeCityHallClient(
       const data: unknown = await res.json()
       const job =
         typeof data === "object" && data !== null ? (data as { job?: unknown }).job : undefined
-      return parseJob(job)
+      try {
+        return parseJob(job)
+      } catch (err) {
+        // City-hall has already leased this Job to us. Without an answer it sits until the lease
+        // expires, is leased again, fails the same way, and ends as a vague expiry failure.
+        if (err instanceof ContractError) await rejectInvalid(job, err)
+        throw err
+      }
     },
     async heartbeat(job) {
       const res = await post(`/api/execute/jobs/${encodeURIComponent(job.id)}/heartbeat`, {

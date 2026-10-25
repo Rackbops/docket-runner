@@ -1,4 +1,4 @@
-import type { CityHallClient } from "./cityhall.js"
+import { type CityHallClient, CityHallError } from "./cityhall.js"
 import type { Executor } from "./claude.js"
 import { runJob } from "./claude.js"
 import type { Config } from "./config.js"
@@ -17,8 +17,15 @@ export interface LoopState {
   pauseReason: PauseReason | null
   jobsDone: number
   jobsFailed: number
-  /** Jobs stopped because city-hall took the lease back: nothing posted, not done or failed. */
+  /**
+   * Jobs whose outcome was never delivered: city-hall took the lease back, or the post was
+   * given up on. Not counted as done or failed.
+   */
   jobsAbandoned: number
+  /** Claims that failed in a row since the last one that got an answer (a Job or "nothing queued"). */
+  consecutiveClaimFailures: number
+  /** The most recent claim failure's message; null until one happens. */
+  lastClaimError: string | null
 }
 
 export interface LoopDeps {
@@ -38,6 +45,12 @@ const defaultSleep = (ms: number) => new Promise<void>((r) => setTimeout(r, ms))
 export const LIMIT_PAUSE_MS = 60 * 60 * 1000
 /** How long to pause after an auth failure before re-probing. */
 export const AUTH_PAUSE_MS = 5 * 60 * 1000
+/** Claim failures in a row after which `/readyz` reports the runner as not ready. */
+export const CLAIM_FAILURES_UNREADY = 5
+/** The longest an outcome post is retried, whatever the lease says (heartbeats keep extending it). */
+export const OUTCOME_RETRY_MS = 10 * 60 * 1000
+/** The longest wait between two outcome post attempts. */
+export const OUTCOME_BACKOFF_MAX_MS = 30 * 1000
 
 const MAX_RESET_CHARS = 100
 /** A reset further out than this is taken as unreadable: the flat pause applies instead. */
@@ -98,6 +111,8 @@ export class Loop {
     jobsDone: 0,
     jobsFailed: 0,
     jobsAbandoned: 0,
+    consecutiveClaimFailures: 0,
+    lastClaimError: null,
   }
   private stopped = false
   private readonly sleep: (ms: number) => Promise<void>
@@ -144,8 +159,12 @@ export class Loop {
         try {
           job = await client.claim()
           this.state.lastClaimAt = new Date(this.now()).toISOString()
+          this.state.consecutiveClaimFailures = 0
         } catch (err) {
-          log("warn", "claim failed", { error: err instanceof Error ? err.message : String(err) })
+          const message = err instanceof Error ? err.message : String(err)
+          this.state.consecutiveClaimFailures += 1
+          this.state.lastClaimError = message
+          log("warn", "claim failed", { error: message })
           await this.sleep(config.pollIntervalMs * 4)
           continue
         }
@@ -168,14 +187,20 @@ export class Loop {
     // A lost lease means city-hall will not accept this run's outcome, so the CLI is stopped
     // rather than left to spend subscription usage on a result nobody takes.
     const lease = new AbortController()
-    // A heartbeat still in flight when the run ends must not touch state or abort a finished run.
-    let running = true
+    // The lease lasts `leaseMs` past the last heartbeat city-hall answered (inferred from the
+    // claim: expiresAt minus now); the outcome post is retried only while it would be accepted.
+    const leaseMs = Math.max(Date.parse(job.lease.expiresAt) - this.now(), 0)
+    let leaseUntil = this.now() + leaseMs
+    // Heartbeats keep going until the outcome is delivered or given up; one still in flight when
+    // that happens must not touch state.
+    let beating = true
     const beat = setInterval(() => {
       client
         .heartbeat(job)
         .then((r) => {
-          if (!running) return
+          if (!beating) return
           this.state.lastHeartbeatAt = new Date(this.now()).toISOString()
+          if (r === "ok") leaseUntil = this.now() + leaseMs
           if (r === "lost" && !lease.signal.aborted) {
             log("warn", "lease lost during run; stopping the CLI", { jobId: job.id })
             lease.abort()
@@ -189,54 +214,41 @@ export class Loop {
         )
     }, job.lease.heartbeatSeconds * 1000)
 
-    let result: JobResult
     try {
-      result = await runJob(job, config, this.deps.execute, lease.signal, log)
+      const result = await runJob(job, config, this.deps.execute, lease.signal, log)
+
+      if (!lease.signal.aborted) {
+        log(result.kind === "success" ? "info" : "warn", "job finished", {
+          jobId: job.id,
+          kind: result.kind,
+          durationMs: result.durationMs,
+          costUsd: result.totalCostUsd ?? null,
+        })
+        const delivered = await this.deliver(job, result, lease.signal, () => leaseUntil)
+        if (delivered === "gave_up") this.state.jobsAbandoned += 1
+        else if (result.kind === "success") this.state.jobsDone += 1
+        else this.state.jobsFailed += 1
+      } else {
+        // Nothing is posted, and the Job counts as abandoned, neither done nor failed: a 409 means
+        // city-hall has already taken the lease back (requeued the Job, or failed it after
+        // `maxExpiredLeases` expiries), so this run's work is not its to report.
+        this.state.jobsAbandoned += 1
+        log("warn", "job abandoned: lease lost; CLI stopped, no outcome posted", {
+          jobId: job.id,
+          durationMs: result.durationMs,
+        })
+      }
+      this.state.currentJobId = null
+      this.pauseAfter(result)
     } finally {
-      running = false
+      beating = false
       clearInterval(beat)
     }
+  }
 
-    if (lease.signal.aborted) {
-      // Nothing is posted, and the Job counts as abandoned, neither done nor failed: a 409 means
-      // city-hall has already taken the lease back (requeued the Job, or failed it after
-      // `maxExpiredLeases` expiries), so this run's work is not its to report.
-      this.state.jobsAbandoned += 1
-      this.state.currentJobId = null
-      log("warn", "job abandoned: lease lost; CLI stopped, no outcome posted", {
-        jobId: job.id,
-        durationMs: result.durationMs,
-      })
-      return
-    }
-
-    if (result.kind === "success") this.state.jobsDone += 1
-    else this.state.jobsFailed += 1
-    log(result.kind === "success" ? "info" : "warn", "job finished", {
-      jobId: job.id,
-      kind: result.kind,
-      durationMs: result.durationMs,
-      costUsd: result.totalCostUsd ?? null,
-    })
-
-    for (let attempt = 1; attempt <= 3; attempt += 1) {
-      try {
-        const r = await client.outcome(job, result)
-        this.state.lastOutcomeAt = new Date(this.now()).toISOString()
-        if (r === "lost")
-          log("warn", "outcome refused: lease lost; city-hall requeues", { jobId: job.id })
-        break
-      } catch (err) {
-        log("warn", "outcome post failed", {
-          jobId: job.id,
-          attempt,
-          error: err instanceof Error ? err.message : String(err),
-        })
-        if (attempt < 3) await this.sleep(config.pollIntervalMs * attempt)
-      }
-    }
-    this.state.currentJobId = null
-
+  /** Auth failures and usage limits pause claiming; everything else claims on. */
+  private pauseAfter(result: JobResult): void {
+    const { log } = this.deps
     if (result.kind === "auth_failed") {
       this.state.pauseReason = "auth"
       this.state.pausedUntil = new Date(this.now() + AUTH_PAUSE_MS).toISOString()
@@ -252,5 +264,66 @@ export class Loop {
         resetsAt: result.resetsAt ?? null,
       })
     }
+  }
+
+  /**
+   * Posts the outcome, retrying with backoff while the lease is still good (heartbeats keep
+   * running meanwhile) and for at most `OUTCOME_RETRY_MS`. A 4xx other than 409/408/429 will not
+   * change on retry, so the first one is answered with a short `error` outcome in its place (a 413
+   * on a huge result, for instance); a second ends the attempt. Returns "gave_up" when nothing was
+   * delivered, so the caller does not count the Job as done.
+   */
+  private async deliver(
+    job: Job,
+    result: JobResult,
+    leaseSignal: AbortSignal,
+    leaseUntil: () => number,
+  ): Promise<"ok" | "refused" | "gave_up"> {
+    const { client, config, log } = this.deps
+    const started = this.now()
+    let body = result
+    let substituted = false
+    for (let attempt = 1; ; attempt += 1) {
+      let status: number | null = null
+      try {
+        const r = await client.outcome(job, body)
+        this.state.lastOutcomeAt = new Date(this.now()).toISOString()
+        if (r === "lost") {
+          log("warn", "outcome refused: lease lost; city-hall requeues", { jobId: job.id })
+          return "refused"
+        }
+        return "ok"
+      } catch (err) {
+        status = err instanceof CityHallError ? err.status : null
+        log("warn", "outcome post failed", {
+          jobId: job.id,
+          attempt,
+          error: err instanceof Error ? err.message : String(err),
+        })
+      }
+      const permanent =
+        status !== null && status >= 400 && status < 500 && ![408, 429].includes(status)
+      if (permanent) {
+        if (substituted) return this.giveUp(job, `HTTP ${status} again on the substitute outcome`)
+        substituted = true
+        body = {
+          kind: "error",
+          detail: `the ${result.kind} outcome was refused with HTTP ${status}`,
+          durationMs: result.durationMs,
+        }
+        continue
+      }
+      const now = this.now()
+      if (leaseSignal.aborted) return this.giveUp(job, "lease lost while posting")
+      if (now >= leaseUntil() || now - started >= OUTCOME_RETRY_MS) {
+        return this.giveUp(job, "the lease ran out before the post got through")
+      }
+      await this.sleep(Math.min(config.pollIntervalMs * 2 ** (attempt - 1), OUTCOME_BACKOFF_MAX_MS))
+    }
+  }
+
+  private giveUp(job: Job, why: string): "gave_up" {
+    this.deps.log("error", "outcome not delivered; giving up", { jobId: job.id, why })
+    return "gave_up"
   }
 }

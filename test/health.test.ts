@@ -3,7 +3,7 @@ import { afterEach, describe, expect, it } from "vitest"
 
 import type { Exec, ExecOptions } from "../src/claude.js"
 import { startHealthServer } from "../src/health.js"
-import type { LoopState } from "../src/loop.js"
+import { CLAIM_FAILURES_UNREADY, type LoopState } from "../src/loop.js"
 import { AuthProbe } from "../src/probe.js"
 import { testConfig } from "./helpers.js"
 
@@ -13,7 +13,7 @@ afterEach(() => {
   server = null
 })
 
-function state(running: boolean): LoopState {
+function state(running: boolean, consecutiveClaimFailures = 0): LoopState {
   return {
     running,
     lastClaimAt: null,
@@ -25,10 +25,12 @@ function state(running: boolean): LoopState {
     jobsDone: 0,
     jobsFailed: 0,
     jobsAbandoned: 0,
+    consecutiveClaimFailures,
+    lastClaimError: null,
   }
 }
 
-async function start(exitCode: number, running: boolean) {
+async function start(exitCode: number, running: boolean, claimFailures = 0) {
   const execute = async (_o: ExecOptions): Promise<Exec> => ({
     exitCode,
     stdout:
@@ -41,7 +43,7 @@ async function start(exitCode: number, running: boolean) {
   })
   server = await startHealthServer(0, "127.0.0.1", {
     probe: new AuthProbe(testConfig(), execute),
-    state: state(running),
+    state: state(running, claimFailures),
     version: "0.0.0-test",
     cliVersion: () => "9.9.9 (fake)",
   })
@@ -79,5 +81,15 @@ describe("health endpoints", () => {
   it("/readyz is 503 when the loop is not running", async () => {
     const base = await start(0, false)
     expect((await fetch(`${base}/readyz`)).status).toBe(503)
+  })
+
+  it("/readyz is 503 once claims have failed N in a row, 200 one short of that", async () => {
+    const down = await start(0, true, CLAIM_FAILURES_UNREADY)
+    const res = await fetch(`${down}/readyz`)
+    expect(res.status).toBe(503)
+    expect(((await res.json()) as { ok: boolean }).ok).toBe(false)
+    server?.close()
+    const up = await start(0, true, CLAIM_FAILURES_UNREADY - 1)
+    expect((await fetch(`${up}/readyz`)).status).toBe(200)
   })
 })
