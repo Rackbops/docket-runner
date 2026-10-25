@@ -39,6 +39,9 @@ export const LIMIT_PAUSE_MS = 60 * 60 * 1000
 /** How long to pause after an auth failure before re-probing. */
 export const AUTH_PAUSE_MS = 5 * 60 * 1000
 
+const MAX_RESET_CHARS = 100
+/** A reset further out than this is taken as unreadable: the flat pause applies instead. */
+const MAX_RESET_AHEAD_MS = 14 * 24 * 3_600_000
 const CLOCK_RE = /^(\d{1,2})(?::(\d{2}))?\s*(am|pm)$/i
 const UNIT_MS: Record<string, number> = { h: 3_600_000, m: 60_000, s: 1_000 }
 const UNIT_RE = /(\d+(?:\.\d+)?)\s*(hours?|hrs?|h|minutes?|mins?|m|seconds?|secs?|s)\b/gi
@@ -49,7 +52,8 @@ const UNIT_RE = /(\d+(?:\.\d+)?)\s*(hours?|hrs?|h|minutes?|mins?|m|seconds?|secs
  * relative span ("2 hours", "1 hour 30 minutes"), or anything `Date.parse` takes (an ISO instant).
  */
 export function parseReset(resetsAt: string | undefined, now: number): number | null {
-  const text = resetsAt?.trim()
+  // The text is model output; a long run of digits would make the span regex quadratic.
+  const text = resetsAt?.trim().slice(0, MAX_RESET_CHARS)
   if (!text) return null
   let t = Number.NaN
   const clock = CLOCK_RE.exec(text)
@@ -73,7 +77,7 @@ export function parseReset(resetsAt: string | undefined, now: number): number | 
       t = Date.parse(text)
     }
   }
-  return Number.isFinite(t) && t > now ? t : null
+  return Number.isFinite(t) && t > now && t - now <= MAX_RESET_AHEAD_MS ? t : null
 }
 
 /**

@@ -221,10 +221,20 @@ describe("parseReset", () => {
   })
 
   it("reads an ISO instant and refuses the past and the unreadable", () => {
-    expect(parseReset("2026-12-01T00:00:00Z", now)).toBe(Date.parse("2026-12-01T00:00:00Z"))
+    expect(parseReset("2026-10-26T00:00:00Z", now)).toBe(Date.parse("2026-10-26T00:00:00Z"))
     expect(parseReset("2020-01-01T00:00:00Z", now)).toBeNull()
     expect(parseReset("whenever", now)).toBeNull()
     expect(parseReset("13pm", now)).toBeNull()
     expect(parseReset(undefined, now)).toBeNull()
+    expect(parseReset("3:75pm", now)).toBeNull()
+    expect(parseReset("2 hours until later", now)).toBeNull()
+  })
+
+  it("refuses a span too far out for a Date, and bounds work on a long digit run", () => {
+    expect(parseReset("99999999999 hours", now)).toBeNull()
+    expect(parseReset("400 hours", now)).toBeNull()
+    const started = Date.now()
+    expect(parseReset(`${"1".repeat(100_000)}x`, now)).toBeNull()
+    expect(Date.now() - started).toBeLessThan(1000)
   })
 })
