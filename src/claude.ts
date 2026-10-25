@@ -37,10 +37,18 @@ export interface ExecOptions {
   signal?: AbortSignal
   /** How long a SIGTERM gets before SIGKILL follows. Default `KILL_GRACE_MS`; tests shorten it. */
   killGraceMs?: number
+  /** How long after the child exits its streams get to close. Default `DRAIN_MS`; tests shorten it. */
+  drainMs?: number
 }
 
 /** How long a child stopped by timeout or abort has to exit on SIGTERM before it gets SIGKILL. */
 export const KILL_GRACE_MS = 5000
+/**
+ * How long the output streams get to close after the child itself has exited. A helper the CLI
+ * started can inherit stdout and outlive it (even a SIGKILL of the CLI); 'close' then never
+ * fires, so the run settles on this timer with the output collected so far.
+ */
+export const DRAIN_MS = 2000
 
 export type Executor = (opts: ExecOptions) => Promise<Exec>
 
@@ -58,6 +66,7 @@ export const realExecutor: Executor = ({
   env,
   signal,
   killGraceMs = KILL_GRACE_MS,
+  drainMs = DRAIN_MS,
 }) =>
   new Promise((resolve) => {
     const started = Date.now()
@@ -67,8 +76,10 @@ export const realExecutor: Executor = ({
     let timedOut = false
     let aborted = false
     let killTimer: NodeJS.Timeout | undefined
+    let drainTimer: NodeJS.Timeout | undefined
     // SIGTERM first; a child that ignores it gets SIGKILL once the grace period is up. 'close'
-    // follows either and settles the promise there, so the output so far is kept.
+    // follows either and settles the promise there, so the output so far is kept; if a helper
+    // still holds the streams open after the child exited, the drain timer settles it instead.
     const kill = () => {
       if (killTimer || settled) return
       child.kill("SIGTERM")
@@ -85,6 +96,9 @@ export const realExecutor: Executor = ({
       settled = true
       clearTimeout(timer)
       clearTimeout(killTimer)
+      clearTimeout(drainTimer)
+      child.stdout.destroy()
+      child.stderr.destroy()
       signal?.removeEventListener("abort", onAbort)
       const exec: Exec = { exitCode, stdout, stderr, timedOut, durationMs: Date.now() - started }
       if (aborted) exec.aborted = true
@@ -106,6 +120,9 @@ export const realExecutor: Executor = ({
     child.on("error", (err) => {
       stderr += `${stderr ? "\n" : ""}spawn ${bin}: ${err.message}`
       finish(-1)
+    })
+    child.on("exit", (code) => {
+      drainTimer = setTimeout(() => finish(code ?? -1), drainMs)
     })
     child.on("close", (code) => finish(code ?? -1))
     child.stdin.on("error", (err) => {
@@ -375,16 +392,18 @@ export function classify(job: Job, exec: Exec): JobResult {
   const text = `${env?.result ?? ""}\n${stderr}`.trim()
   const failed = exec.exitCode !== 0 || env?.is_error === true || env === null
   if (failed) {
-    if (env?.api_error_status === 401 || AUTH_RE.test(text))
-      return base("auth_failed", text || "authentication failed")
+    // The CLI's own codes decide first: a result that merely mentions "OAuth" (a research topic, a
+    // tool's 401) must not be filed auth_failed when the envelope says the turn cap was hit.
+    if (env?.api_error_status === 401) return base("auth_failed", text || "authentication failed")
+    if (env?.subtype === "error_max_turns") return base("turn_cap", text || "turn cap reached")
+    if (AUTH_RE.test(text)) return base("auth_failed", text || "authentication failed")
     if (LIMIT_RE.test(text)) {
       const f = base("usage_limit", text)
       const m = RESET_RE.exec(text)
       if (m?.[1]) f.resetsAt = m[1].trim()
       return f
     }
-    if (env?.subtype === "error_max_turns" || /max[_ ]turns/i.test(text))
-      return base("turn_cap", text || "turn cap reached")
+    if (/max[_ ]turns/i.test(text)) return base("turn_cap", text || "turn cap reached")
     if (/budget limit/i.test(text)) return base("budget_cap", text)
     if (env === null) {
       const quoted = excerpt(exec.stdout)

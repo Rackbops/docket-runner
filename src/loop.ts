@@ -39,10 +39,45 @@ export const LIMIT_PAUSE_MS = 60 * 60 * 1000
 /** How long to pause after an auth failure before re-probing. */
 export const AUTH_PAUSE_MS = 5 * 60 * 1000
 
-function parseReset(resetsAt: string | undefined, now: number): number | null {
-  if (!resetsAt) return null
-  const t = Date.parse(resetsAt)
-  return Number.isFinite(t) && t > now ? t : null
+const MAX_RESET_CHARS = 100
+/** A reset further out than this is taken as unreadable: the flat pause applies instead. */
+const MAX_RESET_AHEAD_MS = 14 * 24 * 3_600_000
+const CLOCK_RE = /^(\d{1,2})(?::(\d{2}))?\s*(am|pm)$/i
+const UNIT_MS: Record<string, number> = { h: 3_600_000, m: 60_000, s: 1_000 }
+const UNIT_RE = /(\d+(?:\.\d+)?)\s*(hours?|hrs?|h|minutes?|mins?|m|seconds?|secs?|s)\b/gi
+
+/**
+ * The instant a usage-limit message says claiming may resume, or null when it names none this
+ * can read. Reads a time of day ("3pm", "3:30 PM": the next such moment in the host's zone), a
+ * relative span ("2 hours", "1 hour 30 minutes"), or anything `Date.parse` takes (an ISO instant).
+ */
+export function parseReset(resetsAt: string | undefined, now: number): number | null {
+  // The text is model output; a long run of digits would make the span regex quadratic.
+  const text = resetsAt?.trim().slice(0, MAX_RESET_CHARS)
+  if (!text) return null
+  let t = Number.NaN
+  const clock = CLOCK_RE.exec(text)
+  if (clock) {
+    const hour = Number(clock[1])
+    const minute = Number(clock[2] ?? 0)
+    if (hour >= 1 && hour <= 12 && minute <= 59) {
+      const d = new Date(now)
+      d.setHours((hour % 12) + (clock[3]?.toLowerCase() === "pm" ? 12 : 0), minute, 0, 0)
+      if (d.getTime() <= now) d.setDate(d.getDate() + 1)
+      t = d.getTime()
+    }
+  } else {
+    const spans = [...text.matchAll(UNIT_RE)]
+    if (spans.length > 0 && spans.map((m) => m[0]).join(" ") === text.replace(/\s+/g, " ")) {
+      let ms = 0
+      for (const m of spans)
+        ms += Number(m[1]) * (UNIT_MS[(m[2] ?? "").charAt(0).toLowerCase()] ?? 0)
+      t = now + ms
+    } else {
+      t = Date.parse(text)
+    }
+  }
+  return Number.isFinite(t) && t > now && t - now <= MAX_RESET_AHEAD_MS ? t : null
 }
 
 /**

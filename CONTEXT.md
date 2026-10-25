@@ -155,7 +155,8 @@ from there, so nothing in the workflow changes.
 When a heartbeat comes back 409, the loop aborts an `AbortController` whose signal `runJob` hands
 the executor, which kills the child through the same `kill()` the timeout uses: SIGTERM, then
 SIGKILL if 'close' has not fired within `KILL_GRACE_MS` (5 s; `ExecOptions.killGraceMs` overrides
-it, which the tests use). The Job is then abandoned: no outcome is posted and it counts in
+it, which the tests use). A helper that inherited stdout can keep 'close' from ever firing, so the
+run also settles `DRAIN_MS` (2 s; `drainMs`) after the child's 'exit' with the output so far. The Job is then abandoned: no outcome is posted and it counts in
 `jobsAbandoned` (in the loop state `/readyz` reports), neither done nor failed. A 409 means
 city-hall has already taken the lease back -- requeued the Job, or failed it after
 `maxExpiredLeases` expiries (Lepid-Labs/city-hall `src/server/lib/jobs.ts:128-130,175-183` at
@@ -207,9 +208,12 @@ interactive sign-in variant; a headless runner cannot use it.
 ## Classification facts
 
 `classify()` reads both the exit code and the envelope: the CLI exits 1 for every `is_error`
-envelope. `api_error_status: 401` or "OAuth"/"authenticate"/"Not logged in" text is
-`auth_failed`; "You've hit your ... limit" is `usage_limit` and a "Resets at <time>" tail is kept
-as `resetsAt`; `subtype: error_max_turns` is `turn_cap`; "Budget limit" is `budget_cap`; no
+envelope. The CLI's own codes decide first: `api_error_status: 401` is `auth_failed` and
+`subtype: error_max_turns` is `turn_cap`, whatever the result text mentions. Only then the text:
+"OAuth"/"authenticate"/"Not logged in" is `auth_failed`; "You've hit your ... limit" is
+`usage_limit` and a "Resets at <time>" tail is kept as `resetsAt`, which the loop reads
+(`parseReset`) as a time of day ("3pm"), a span ("2 hours") or an ISO instant, else pauses a flat
+hour; "max turns" text is `turn_cap`; "Budget limit" is `budget_cap`; no
 JSON envelope at all is `error`, and its detail quotes stdout and stderr through `excerpt()`, so
 it says what came back instead of "(no output)". `excerpt()` keeps the first 200 characters, then
 a `... (N chars)` marker naming the full length; it is one line, ASCII, with `sk-ant-` shapes and

@@ -5,7 +5,7 @@ import { join } from "node:path"
 import { afterEach, describe, expect, it } from "vitest"
 
 import { makeCityHallClient } from "../src/cityhall.js"
-import { Loop } from "../src/loop.js"
+import { Loop, parseReset } from "../src/loop.js"
 import { job, testConfig } from "./helpers.js"
 
 interface Recorded {
@@ -187,5 +187,54 @@ describe("the claim loop against a fake city-hall", () => {
     expect(loop.state.pauseReason).toBe("usage_limit")
     expect(loop.state.pausedUntil).toBe("2026-09-27T01:00:00.000Z")
     expect(rec.claims).toBe(1)
+  })
+
+  it("pauses until a time-of-day reset the message names", async () => {
+    process.env.FAKE_CLAUDE_MODE = "limit_clock"
+    const { server, rec } = fakeCityHall([job()])
+    servers.push(server)
+    const config = testConfig({ cityHallUrl: await listen(server) })
+    const now = new Date(2026, 9, 25, 10, 0, 0).getTime()
+    const loop = new Loop({ config, client: makeCityHallClient(config), log, now: () => now })
+    await runLoopUntil(loop, () => rec.outcomes.length === 1, 2000)
+    expect(loop.state.pausedUntil).toBe(new Date(2026, 9, 25, 15, 0, 0).toISOString())
+  })
+})
+
+describe("parseReset", () => {
+  const now = new Date(2026, 9, 25, 10, 0, 0).getTime()
+  const at = (h: number, m = 0, dayOffset = 0) =>
+    new Date(2026, 9, 25 + dayOffset, h, m, 0, 0).getTime()
+
+  it("reads a time of day as the next such moment in the host zone", () => {
+    expect(parseReset("3pm", now)).toBe(at(15))
+    expect(parseReset("3:30 PM", now)).toBe(at(15, 30))
+    expect(parseReset("9am", now)).toBe(at(9, 0, 1))
+    expect(parseReset("12am", now)).toBe(at(0, 0, 1))
+    expect(parseReset("12pm", now)).toBe(at(12))
+  })
+
+  it("reads a relative span", () => {
+    expect(parseReset("2 hours", now)).toBe(now + 2 * 3_600_000)
+    expect(parseReset("1 hour 30 minutes", now)).toBe(now + 5_400_000)
+    expect(parseReset("45 minutes", now)).toBe(now + 45 * 60_000)
+  })
+
+  it("reads an ISO instant and refuses the past and the unreadable", () => {
+    expect(parseReset("2026-10-26T00:00:00Z", now)).toBe(Date.parse("2026-10-26T00:00:00Z"))
+    expect(parseReset("2020-01-01T00:00:00Z", now)).toBeNull()
+    expect(parseReset("whenever", now)).toBeNull()
+    expect(parseReset("13pm", now)).toBeNull()
+    expect(parseReset(undefined, now)).toBeNull()
+    expect(parseReset("3:75pm", now)).toBeNull()
+    expect(parseReset("2 hours until later", now)).toBeNull()
+  })
+
+  it("refuses a span too far out for a Date, and bounds work on a long digit run", () => {
+    expect(parseReset("99999999999 hours", now)).toBeNull()
+    expect(parseReset("400 hours", now)).toBeNull()
+    const started = Date.now()
+    expect(parseReset(`${"1".repeat(100_000)}x`, now)).toBeNull()
+    expect(Date.now() - started).toBeLessThan(1000)
   })
 })

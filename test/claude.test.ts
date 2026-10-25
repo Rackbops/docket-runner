@@ -585,3 +585,48 @@ describe("the kill fallback", () => {
     expect(() => process.kill(pid, 0)).toThrow()
   })
 })
+
+describe("a helper that holds stdout open", () => {
+  it("settles after the kill and the drain even though the streams never close", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "runner-holder-"))
+    const helperPidFile = join(dir, "helper-pid")
+    const started = Date.now()
+    let helperPid = 0
+    try {
+      const exec = await realExecutor({
+        bin: FAKE_CLAUDE,
+        args: ["-p"],
+        stdin: "hang",
+        timeoutMs: 300,
+        env: {
+          ...process.env,
+          FAKE_CLAUDE_MODE: "holder",
+          FAKE_CLAUDE_GRANDCHILD_PID_FILE: helperPidFile,
+        },
+        killGraceMs: 200,
+        drainMs: 200,
+      })
+      expect(exec.timedOut).toBe(true)
+      expect(Date.now() - started).toBeLessThan(3000)
+    } finally {
+      if (existsSync(helperPidFile)) helperPid = Number(readFileSync(helperPidFile, "utf8"))
+      if (helperPid > 0) {
+        try {
+          process.kill(helperPid, "SIGKILL")
+        } catch {}
+      }
+    }
+  })
+})
+
+describe("the CLI's own failure codes win over text patterns", () => {
+  it("files error_max_turns as turn_cap even when the result mentions OAuth", async () => {
+    expect((await run("max_turns_oauth")).result.kind).toBe("turn_cap")
+  })
+
+  it("still files a 401 as auth_failed when the result also says max turns", () => {
+    const stdout = JSON.stringify({ is_error: true, api_error_status: 401, result: "max turns" })
+    const failed: Exec = { exitCode: 1, stdout, stderr: "", timedOut: false, durationMs: 1 }
+    expect(classify(parseJob(job()), failed).kind).toBe("auth_failed")
+  })
+})
