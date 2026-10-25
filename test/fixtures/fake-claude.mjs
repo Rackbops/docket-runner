@@ -2,7 +2,7 @@
 // A stand-in for the Claude CLI so tests never touch the real one or the subscription. Reads the
 // prompt from stdin like the real `claude -p`, then answers according to FAKE_CLAUDE_MODE:
 //   success (default) | schema | research | auth401 | limit | max_turns | budget | slow | crash
-//   | garbage | stubborn (ignores SIGTERM and never answers, so only SIGKILL stops it)
+//   | holder (spawns a helper that holds stdout open, then hangs) | garbage | stubborn (ignores SIGTERM and never answers, so only SIGKILL stops it)
 // `research` answers in the tracker's research answer schema (docket-types `ANSWER_SCHEMA`), for
 // the end-to-end check in test/e2e/.
 // It records its argv to FAKE_CLAUDE_ARGV_FILE when set, so tests can assert on the flag set, and
@@ -10,6 +10,7 @@
 // The runner's auth probe (src/probe.ts: exactly `-p --output-format json --no-session-persistence`
 // with "ok" on stdin) is answered at once in every mode: `slow` and `stubborn` would otherwise hold
 // a starting runner for the whole delay. It writes no pid file, so it never hides a Job's pid.
+import { spawn } from "node:child_process"
 import { appendFileSync, writeFileSync } from "node:fs"
 
 const mode = process.env.FAKE_CLAUDE_MODE ?? "success"
@@ -49,6 +50,17 @@ switch (mode) {
     setInterval(() => {}, 1000)
     await new Promise(() => {})
     break
+  case "holder": {
+    // A helper that inherits stdout and outlives this process, so the stream never closes.
+    const helper = spawn(process.execPath, ["-e", "setTimeout(() => {}, 30000)"], {
+      stdio: ["ignore", "inherit", "inherit"],
+    })
+    const helperPidFile = process.env.FAKE_CLAUDE_GRANDCHILD_PID_FILE
+    if (helperPidFile) writeFileSync(helperPidFile, String(helper.pid))
+    setInterval(() => {}, 1000)
+    await new Promise(() => {})
+    break
+  }
   case "slow":
     await new Promise((r) => setTimeout(r, Number(process.env.FAKE_CLAUDE_DELAY_MS ?? "400")))
     out({
@@ -102,6 +114,19 @@ switch (mode) {
   case "limit":
     out(
       { is_error: true, result: "You've hit your session limit. Resets at 2026-09-27T01:00:00Z." },
+      1,
+    )
+    break
+  case "limit_clock":
+    out({ is_error: true, result: "You've hit your session limit. Resets at 3pm." }, 1)
+    break
+  case "max_turns_oauth":
+    out(
+      {
+        is_error: true,
+        subtype: "error_max_turns",
+        result: "Reached max turns (2) while researching OAuth flows",
+      },
       1,
     )
     break
