@@ -163,7 +163,7 @@ describe("the claim loop against a fake city-hall", () => {
     const config = testConfig({ cityHallUrl: await listen(server) })
     const loop = new Loop({ config, client: makeCityHallClient(config), log })
     await runLoopUntil(loop, () => rec.outcomes.length === 1)
-    // 300 ms of run at 1 ms would be hundreds of beats; the 5 s floor sends none.
+    // 300 ms of run at 1 ms would be hundreds of beats; the 1 s floor sends none.
     expect(rec.heartbeats).toHaveLength(0)
   })
 

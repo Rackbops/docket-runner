@@ -64,7 +64,7 @@ const UNIT_MS: Record<string, number> = { h: 3_600_000, m: 60_000, s: 1_000 }
 const UNIT_RE = /(\d+(?:\.\d+)?)\s*(hours?|hrs?|h|minutes?|mins?|m|seconds?|secs?|s)\b/gi
 
 /** The heartbeat interval is city-hall's to name, but a bad value must not flood or starve it. */
-export const HEARTBEAT_MIN_S = 5
+export const HEARTBEAT_MIN_S = 1
 export const HEARTBEAT_MAX_S = 300
 export const heartbeatMs = (seconds: number, minSeconds = HEARTBEAT_MIN_S): number =>
   Math.min(Math.max(seconds, minSeconds), HEARTBEAT_MAX_S) * 1000
