@@ -290,6 +290,23 @@ export function planFor(
 }
 
 /**
+ * What one run may spend: the Job's own `maxTurns`, `maxBudgetUsd` and `timeoutMs` where it names
+ * them, the runner's defaults where it does not, and never more than the runner's ceilings
+ * (`MAX_MAX_TURNS`, `MAX_MAX_BUDGET_USD`, `MAX_TIMEOUT_MS`). A Job cannot hold the only runner for
+ * a day or spend the subscription by asking for it.
+ */
+export function jobLimits(
+  job: Pick<Job, "maxTurns" | "maxBudgetUsd" | "timeoutMs">,
+  config: Config,
+): { maxTurns: number; maxBudgetUsd: number; timeoutMs: number } {
+  return {
+    maxTurns: Math.min(job.maxTurns ?? config.defaultMaxTurns, config.maxMaxTurns),
+    maxBudgetUsd: Math.min(job.maxBudgetUsd ?? config.defaultMaxBudgetUsd, config.maxMaxBudgetUsd),
+    timeoutMs: Math.min(job.timeoutMs ?? config.claudeTimeoutMs, config.maxTimeoutMs),
+  }
+}
+
+/**
  * The CLI arguments for a Job. Pure, so the flag set is unit-tested without a process. Throws
  * `ToolCeilingError` for a Job outside the tool ceiling (`runJob` turns that into a failure).
  */
@@ -301,8 +318,9 @@ export function buildArgs(
   const args = ["-p", "--output-format", "json"]
   const model = job.model ?? config.defaultModel
   if (model) args.push("--model", model)
-  args.push("--max-turns", String(job.maxTurns ?? config.defaultMaxTurns))
-  args.push("--max-budget-usd", String(job.maxBudgetUsd ?? config.defaultMaxBudgetUsd))
+  const limits = jobLimits(job, config)
+  args.push("--max-turns", String(limits.maxTurns))
+  args.push("--max-budget-usd", String(limits.maxBudgetUsd))
   // --tools is what exists in the run at all: anything not named (Read, Glob, Bash, ...) is gone,
   // not merely unapproved. "" means no built-in tools. --strict-mcp-config loads no MCP server
   // from any settings file the CLI might find; --mcp-config adds Firecrawl's, and only when the
@@ -374,7 +392,11 @@ export function excerpt(s: string, max: number = EXCERPT_CHARS): string {
  * Turns a finished CLI call into a JobResult. Exit code and `is_error` are both read; neither is
  * trusted alone (the CLI exits 1 for every `is_error` envelope, including the diagnostic ones).
  */
-export function classify(job: Job, exec: Exec): JobResult {
+export function classify(
+  job: Job,
+  exec: Exec,
+  timeoutMs: number | undefined = job.timeoutMs,
+): JobResult {
   const env = parseEnvelope(exec.stdout)
   const base = (kind: JobFailure["kind"], detail: string): JobFailure => {
     const f: JobFailure = { kind, detail: detail.slice(0, 500), durationMs: exec.durationMs }
@@ -384,7 +406,7 @@ export function classify(job: Job, exec: Exec): JobResult {
     return f
   }
   if (exec.timedOut)
-    return base("timeout", `claude -p exceeded ${job.timeoutMs ?? "the default"} ms and was killed`)
+    return base("timeout", `claude -p exceeded ${timeoutMs ?? "the default"} ms and was killed`)
   // Only the unit test sees this branch: the loop discards an aborted result without posting it.
   if (exec.aborted) return base("error", "claude -p was stopped: the lease was lost")
 
@@ -470,13 +492,14 @@ export async function runJob(
     CLAUDE_CODE_OAUTH_TOKEN: config.claudeCodeOauthToken,
   }
   if (plan.firecrawl && config.firecrawlApiKey) env.FIRECRAWL_API_KEY = config.firecrawlApiKey
+  const limits = jobLimits(job, config)
   const exec = await execute({
     ...(signal ? { signal } : {}),
     bin: config.claudeBin,
     args,
     stdin: job.prompt,
-    timeoutMs: job.timeoutMs ?? config.claudeTimeoutMs,
+    timeoutMs: limits.timeoutMs,
     env,
   })
-  return classify(job, exec)
+  return classify(job, exec, limits.timeoutMs)
 }

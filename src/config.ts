@@ -11,6 +11,9 @@ export class ConfigError extends Error {
   }
 }
 
+/** The longest delay `setTimeout` honours; above it Node fires after 1 ms. */
+export const MAX_TIMER_MS = 2 ** 31 - 1
+
 export interface Config {
   /** The subscription credential (a `claude setup-token` result); never logged. */
   claudeCodeOauthToken: string
@@ -28,6 +31,13 @@ export interface Config {
   defaultMaxTurns: number
   defaultMaxBudgetUsd: number
   defaultModel?: string
+  /**
+   * What a Job may ask for, at most. The runner holds the subscription, so a Job's own `timeoutMs`,
+   * `maxTurns` and `maxBudgetUsd` are clamped to these, as its tools are to `TOOL_CEILING`.
+   */
+  maxTimeoutMs: number
+  maxMaxTurns: number
+  maxMaxBudgetUsd: number
   /**
    * Firecrawl's API key (a third-party key, not an Anthropic one), for research Jobs that name a
    * `mcp__firecrawl__` tool. Optional: without it those tools are dropped. Never logged or in argv.
@@ -84,11 +94,31 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     pollIntervalMs: intOr(env, "POLL_INTERVAL_MS", 1_500, 100),
     defaultMaxTurns: intOr(env, "DEFAULT_MAX_TURNS", 8),
     defaultMaxBudgetUsd: Number(env.DEFAULT_MAX_BUDGET_USD ?? "0.5"),
+    maxTimeoutMs: intOr(env, "MAX_TIMEOUT_MS", 10 * 60_000),
+    maxMaxTurns: intOr(env, "MAX_MAX_TURNS", 50),
+    maxMaxBudgetUsd: Number(env.MAX_MAX_BUDGET_USD ?? "5"),
     healthPort: intOr(env, "HEALTH_PORT", 8787, 0),
     healthBind: env.HEALTH_BIND?.trim() || "0.0.0.0",
   }
   if (!Number.isFinite(config.defaultMaxBudgetUsd) || config.defaultMaxBudgetUsd <= 0) {
     throw new ConfigError("DEFAULT_MAX_BUDGET_USD must be a positive number", 1)
+  }
+  if (!Number.isInteger(config.maxMaxTurns)) {
+    throw new ConfigError("MAX_MAX_TURNS must be a whole number", 1)
+  }
+  if (!Number.isFinite(config.maxMaxBudgetUsd) || config.maxMaxBudgetUsd <= 0) {
+    throw new ConfigError("MAX_MAX_BUDGET_USD must be a positive number", 1)
+  }
+  // Node clamps a timer above 2^31-1 ms to 1 ms, which would kill every run at once.
+  if (config.maxTimeoutMs > MAX_TIMER_MS) {
+    throw new ConfigError(`MAX_TIMEOUT_MS must be at most ${MAX_TIMER_MS}`, 1)
+  }
+  for (const [name, def, max] of [
+    ["MAX_TIMEOUT_MS", config.claudeTimeoutMs, config.maxTimeoutMs],
+    ["MAX_MAX_TURNS", config.defaultMaxTurns, config.maxMaxTurns],
+    ["MAX_MAX_BUDGET_USD", config.defaultMaxBudgetUsd, config.maxMaxBudgetUsd],
+  ] as const) {
+    if (max < def) throw new ConfigError(`${name} must be at least its default (${def})`, 1)
   }
   if (cfId !== "") {
     config.cfAccessClientId = cfId

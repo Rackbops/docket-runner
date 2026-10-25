@@ -5,7 +5,14 @@ import { join } from "node:path"
 import { afterEach, describe, expect, it } from "vitest"
 
 import { makeCityHallClient } from "../src/cityhall.js"
-import { CLAIM_FAILURES_UNREADY, Loop, parseReset } from "../src/loop.js"
+import {
+  CLAIM_FAILURES_UNREADY,
+  HEARTBEAT_MAX_S,
+  HEARTBEAT_MIN_S,
+  heartbeatMs,
+  Loop,
+  parseReset,
+} from "../src/loop.js"
 import { job, testConfig } from "./helpers.js"
 
 interface Recorded {
@@ -124,7 +131,12 @@ describe("the claim loop against a fake city-hall", () => {
     const { server, rec } = fakeCityHall([job()])
     servers.push(server)
     const config = testConfig({ cityHallUrl: await listen(server) })
-    const loop = new Loop({ config, client: makeCityHallClient(config), log })
+    const loop = new Loop({
+      config,
+      client: makeCityHallClient(config),
+      log,
+      heartbeatMinSeconds: 0.01,
+    })
     await runLoopUntil(loop, () => rec.outcomes.length === 1 && rec.claims >= 2)
 
     expect(rec.outcomes).toHaveLength(1)
@@ -142,6 +154,19 @@ describe("the claim loop against a fake city-hall", () => {
     expect(loop.state.lastOutcomeAt).not.toBeNull()
   })
 
+  it("does not heartbeat faster than the floor, whatever the lease asks", async () => {
+    process.env.FAKE_CLAUDE_MODE = "slow"
+    process.env.FAKE_CLAUDE_DELAY_MS = "300"
+    const lease = { token: "lease-1", expiresAt: new Date(Date.now() + 60_000).toISOString() }
+    const { server, rec } = fakeCityHall([job({ lease: { ...lease, heartbeatSeconds: 0.001 } })])
+    servers.push(server)
+    const config = testConfig({ cityHallUrl: await listen(server) })
+    const loop = new Loop({ config, client: makeCityHallClient(config), log })
+    await runLoopUntil(loop, () => rec.outcomes.length === 1)
+    // 300 ms of run at 1 ms would be hundreds of beats; the 1 s floor sends none.
+    expect(rec.heartbeats).toHaveLength(0)
+  })
+
   it("kills the CLI as soon as the lease is lost, and posts nothing", async () => {
     process.env.FAKE_CLAUDE_MODE = "slow"
     process.env.FAKE_CLAUDE_DELAY_MS = "30000"
@@ -152,7 +177,12 @@ describe("the claim loop against a fake city-hall", () => {
     const { server, rec } = fakeCityHall([job()], { loseLease: () => existsSync(pidFile) })
     servers.push(server)
     const config = testConfig({ cityHallUrl: await listen(server), claudeTimeoutMs: 60_000 })
-    const loop = new Loop({ config, client: makeCityHallClient(config), log })
+    const loop = new Loop({
+      config,
+      client: makeCityHallClient(config),
+      log,
+      heartbeatMinSeconds: 0.01,
+    })
     logs.length = 0
     const started = Date.now()
     await runLoopUntil(loop, () => logs.some((l) => l.includes("job abandoned")))
@@ -461,5 +491,16 @@ describe("parseReset", () => {
     const started = Date.now()
     expect(parseReset(`${"1".repeat(100_000)}x`, now)).toBeNull()
     expect(Date.now() - started).toBeLessThan(1000)
+  })
+})
+
+describe("heartbeatMs", () => {
+  it("clamps the interval city-hall names to a sane range", () => {
+    expect(heartbeatMs(0.001)).toBe(HEARTBEAT_MIN_S * 1000)
+    expect(HEARTBEAT_MIN_S).toBe(1)
+    expect(HEARTBEAT_MAX_S).toBe(300)
+    expect(heartbeatMs(30)).toBe(30_000)
+    expect(heartbeatMs(1e9)).toBe(HEARTBEAT_MAX_S * 1000)
+    expect(heartbeatMs(0.001, 0.01)).toBe(10)
   })
 })
