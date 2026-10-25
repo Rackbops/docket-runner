@@ -271,6 +271,9 @@ describe("the claim loop against a fake city-hall", () => {
     const posted = rec.outcomes[0]?.body as { result: { kind: string; detail: string } }
     expect(posted.result.kind).toBe("error")
     expect(posted.result.detail).toContain("413")
+    // City-hall recorded an error, so the Job is failed, not done.
+    expect(loop.state.jobsFailed).toBe(1)
+    expect(loop.state.jobsDone).toBe(0)
   })
 
   it("answers a claimed Job that fails validation with an error outcome naming the field", async () => {
@@ -287,6 +290,8 @@ describe("the claim loop against a fake city-hall", () => {
     expect(posted.leaseToken).toBe("lease-1")
     expect(posted.result.kind).toBe("error")
     expect(posted.result.detail).toContain("job.maxTurns")
+    // The queue answered, so a Job it sent that does not validate is not a failing claim.
+    expect(loop.state.consecutiveClaimFailures).toBe(0)
   })
 
   it("goes unready after consecutive claim failures and recovers on one success", async () => {

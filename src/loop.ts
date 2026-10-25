@@ -2,7 +2,7 @@ import { type CityHallClient, CityHallError } from "./cityhall.js"
 import type { Executor } from "./claude.js"
 import { runJob } from "./claude.js"
 import type { Config } from "./config.js"
-import type { Job, JobResult } from "./contract.js"
+import { ContractError, type Job, type JobResult } from "./contract.js"
 import type { Logger } from "./log.js"
 
 export type PauseReason = "auth" | "usage_limit"
@@ -162,7 +162,9 @@ export class Loop {
           this.state.consecutiveClaimFailures = 0
         } catch (err) {
           const message = err instanceof Error ? err.message : String(err)
-          this.state.consecutiveClaimFailures += 1
+          // A Job city-hall sent that does not validate was answered (cityhall.ts), so the queue
+          // and the credential work; it is not a sign the runner cannot claim.
+          if (!(err instanceof ContractError)) this.state.consecutiveClaimFailures += 1
           this.state.lastClaimError = message
           log("warn", "claim failed", { error: message })
           await this.sleep(config.pollIntervalMs * 4)
@@ -189,7 +191,9 @@ export class Loop {
     const lease = new AbortController()
     // The lease lasts `leaseMs` past the last heartbeat city-hall answered (inferred from the
     // claim: expiresAt minus now); the outcome post is retried only while it would be accepted.
-    const leaseMs = Math.max(Date.parse(job.lease.expiresAt) - this.now(), 0)
+    const claimed = Date.parse(job.lease.expiresAt) - this.now()
+    // An unreadable or already-past expiry would disable retrying; assume the longest we retry.
+    const leaseMs = Number.isFinite(claimed) && claimed > 0 ? claimed : OUTCOME_RETRY_MS
     let leaseUntil = this.now() + leaseMs
     // Heartbeats keep going until the outcome is delivered or given up; one still in flight when
     // that happens must not touch state.
@@ -226,8 +230,9 @@ export class Loop {
         })
         const delivered = await this.deliver(job, result, lease.signal, () => leaseUntil)
         if (delivered === "gave_up") this.state.jobsAbandoned += 1
-        else if (result.kind === "success") this.state.jobsDone += 1
-        else this.state.jobsFailed += 1
+        else if (delivered === "substituted" || result.kind !== "success")
+          this.state.jobsFailed += 1
+        else this.state.jobsDone += 1
       } else {
         // Nothing is posted, and the Job counts as abandoned, neither done nor failed: a 409 means
         // city-hall has already taken the lease back (requeued the Job, or failed it after
@@ -278,7 +283,7 @@ export class Loop {
     result: JobResult,
     leaseSignal: AbortSignal,
     leaseUntil: () => number,
-  ): Promise<"ok" | "refused" | "gave_up"> {
+  ): Promise<"ok" | "substituted" | "refused" | "gave_up"> {
     const { client, config, log } = this.deps
     const started = this.now()
     let body = result
@@ -292,7 +297,7 @@ export class Loop {
           log("warn", "outcome refused: lease lost; city-hall requeues", { jobId: job.id })
           return "refused"
         }
-        return "ok"
+        return substituted ? "substituted" : "ok"
       } catch (err) {
         status = err instanceof CityHallError ? err.status : null
         log("warn", "outcome post failed", {
@@ -303,6 +308,7 @@ export class Loop {
       }
       const permanent =
         status !== null && status >= 400 && status < 500 && ![408, 429].includes(status)
+      if (leaseSignal.aborted) return this.giveUp(job, "lease lost while posting")
       if (permanent) {
         if (substituted) return this.giveUp(job, `HTTP ${status} again on the substitute outcome`)
         substituted = true
@@ -314,7 +320,6 @@ export class Loop {
         continue
       }
       const now = this.now()
-      if (leaseSignal.aborted) return this.giveUp(job, "lease lost while posting")
       if (now >= leaseUntil() || now - started >= OUTCOME_RETRY_MS) {
         return this.giveUp(job, "the lease ran out before the post got through")
       }
