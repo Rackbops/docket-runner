@@ -36,7 +36,7 @@ WORKDIR /app
 COPY package.json ./
 COPY --from=build /app/dist ./dist
 # Build-time smoke check: the entry point exists and the CLI runs (its version, not its auth).
-RUN test -f dist/index.js && ! grep -rq 'from "@rackbops/' dist && claude --version
+RUN test -f dist/index.js && ! grep -rqE "\b(from|import|require)[[:space:]]*[(]?[[:space:]]*[\"']@rackbops/" dist && claude --version
 ENV NODE_ENV=production \
   HOME=/home/node \
   HEALTH_PORT=8787 \
