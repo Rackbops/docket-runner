@@ -14,7 +14,7 @@ export function testConfig(overrides: Partial<Config> = {}): Config {
     pollIntervalMs: 20,
     defaultMaxTurns: 8,
     defaultMaxBudgetUsd: 0.5,
-    maxTimeoutMs: 1_800_000,
+    maxTimeoutMs: 600_000,
     maxMaxTurns: 50,
     maxMaxBudgetUsd: 5,
     healthPort: 0,

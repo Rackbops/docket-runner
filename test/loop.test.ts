@@ -497,6 +497,8 @@ describe("parseReset", () => {
 describe("heartbeatMs", () => {
   it("clamps the interval city-hall names to a sane range", () => {
     expect(heartbeatMs(0.001)).toBe(HEARTBEAT_MIN_S * 1000)
+    expect(HEARTBEAT_MIN_S).toBe(1)
+    expect(HEARTBEAT_MAX_S).toBe(300)
     expect(heartbeatMs(30)).toBe(30_000)
     expect(heartbeatMs(1e9)).toBe(HEARTBEAT_MAX_S * 1000)
     expect(heartbeatMs(0.001, 0.01)).toBe(10)

@@ -666,6 +666,18 @@ describe("a Job's limits are clamped to the runner's ceilings (#36)", () => {
     expect(seen).toBe(5_000)
   })
 
+  it("names the clamped timeout in the failure detail", async () => {
+    const executor = async (): Promise<Exec> => ({
+      exitCode: 1,
+      stdout: "",
+      stderr: "",
+      timedOut: true,
+      durationMs: 1,
+    })
+    const r = await runJob(parseJob(job({ timeoutMs: 86_400_000 })), capped, executor)
+    expect(r.kind === "timeout" && r.detail).toContain("exceeded 5000 ms")
+  })
+
   it("does not let timeoutMs: 3e9 kill the run at once", async () => {
     const { result } = await run("success", { timeoutMs: 3e9 })
     expect(result.kind).toBe("success")

@@ -72,7 +72,7 @@ export const SCHEMA = [
   { key: "POLL_INTERVAL_MS", default: "1500" },
   { key: "DEFAULT_MAX_TURNS", default: "8" },
   { key: "DEFAULT_MAX_BUDGET_USD", default: "0.50" },
-  { key: "MAX_TIMEOUT_MS", default: "1800000" },
+  { key: "MAX_TIMEOUT_MS", default: "600000" },
   { key: "MAX_MAX_TURNS", default: "50" },
   { key: "MAX_MAX_BUDGET_USD", default: "5" },
   { key: "DEFAULT_MODEL", default: "" },

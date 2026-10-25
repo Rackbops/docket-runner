@@ -94,7 +94,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     pollIntervalMs: intOr(env, "POLL_INTERVAL_MS", 1_500, 100),
     defaultMaxTurns: intOr(env, "DEFAULT_MAX_TURNS", 8),
     defaultMaxBudgetUsd: Number(env.DEFAULT_MAX_BUDGET_USD ?? "0.5"),
-    maxTimeoutMs: intOr(env, "MAX_TIMEOUT_MS", 30 * 60_000),
+    maxTimeoutMs: intOr(env, "MAX_TIMEOUT_MS", 10 * 60_000),
     maxMaxTurns: intOr(env, "MAX_MAX_TURNS", 50),
     maxMaxBudgetUsd: Number(env.MAX_MAX_BUDGET_USD ?? "5"),
     healthPort: intOr(env, "HEALTH_PORT", 8787, 0),
@@ -102,6 +102,9 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
   }
   if (!Number.isFinite(config.defaultMaxBudgetUsd) || config.defaultMaxBudgetUsd <= 0) {
     throw new ConfigError("DEFAULT_MAX_BUDGET_USD must be a positive number", 1)
+  }
+  if (!Number.isInteger(config.maxMaxTurns)) {
+    throw new ConfigError("MAX_MAX_TURNS must be a whole number", 1)
   }
   if (!Number.isFinite(config.maxMaxBudgetUsd) || config.maxMaxBudgetUsd <= 0) {
     throw new ConfigError("MAX_MAX_BUDGET_USD must be a positive number", 1)

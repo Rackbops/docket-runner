@@ -392,7 +392,11 @@ export function excerpt(s: string, max: number = EXCERPT_CHARS): string {
  * Turns a finished CLI call into a JobResult. Exit code and `is_error` are both read; neither is
  * trusted alone (the CLI exits 1 for every `is_error` envelope, including the diagnostic ones).
  */
-export function classify(job: Job, exec: Exec): JobResult {
+export function classify(
+  job: Job,
+  exec: Exec,
+  timeoutMs: number | undefined = job.timeoutMs,
+): JobResult {
   const env = parseEnvelope(exec.stdout)
   const base = (kind: JobFailure["kind"], detail: string): JobFailure => {
     const f: JobFailure = { kind, detail: detail.slice(0, 500), durationMs: exec.durationMs }
@@ -402,10 +406,7 @@ export function classify(job: Job, exec: Exec): JobResult {
     return f
   }
   if (exec.timedOut)
-    return base(
-      "timeout",
-      `claude -p exceeded ${job.timeoutMs ?? "the default"} ms (or the runner's ceiling) and was killed`,
-    )
+    return base("timeout", `claude -p exceeded ${timeoutMs ?? "the default"} ms and was killed`)
   // Only the unit test sees this branch: the loop discards an aborted result without posting it.
   if (exec.aborted) return base("error", "claude -p was stopped: the lease was lost")
 
@@ -491,13 +492,14 @@ export async function runJob(
     CLAUDE_CODE_OAUTH_TOKEN: config.claudeCodeOauthToken,
   }
   if (plan.firecrawl && config.firecrawlApiKey) env.FIRECRAWL_API_KEY = config.firecrawlApiKey
+  const limits = jobLimits(job, config)
   const exec = await execute({
     ...(signal ? { signal } : {}),
     bin: config.claudeBin,
     args,
     stdin: job.prompt,
-    timeoutMs: jobLimits(job, config).timeoutMs,
+    timeoutMs: limits.timeoutMs,
     env,
   })
-  return classify(job, exec)
+  return classify(job, exec, limits.timeoutMs)
 }
