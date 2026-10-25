@@ -29,7 +29,8 @@ so a heartbeat is observed without slowing the suite. `loseLease` is a predicate
 answers 409 while it returns true. The lost-lease test answers 204 until the fake CLI has written
 its pid file and 409 after, because on a busy machine the first 50 ms heartbeat can land before
 the child is up; it runs the slow fake for 30 s and asserts the loop kills it within a few
-seconds, posts nothing and counts it in `jobsAbandoned`.
+seconds, posts nothing and counts it in `jobsAbandoned`. `jobsAbandoned` also counts a Job whose
+outcome post was given up on (lease ran out, 10 minutes, or a second refusal).
 
 ## The end-to-end check
 

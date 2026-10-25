@@ -49,6 +49,8 @@ export const AUTH_PAUSE_MS = 5 * 60 * 1000
 export const CLAIM_FAILURES_UNREADY = 5
 /** The longest an outcome post is retried, whatever the lease says (heartbeats keep extending it). */
 export const OUTCOME_RETRY_MS = 10 * 60 * 1000
+/** The longest an outcome post is retried once `stop()` has been called, to fit the deploy's stop grace period. */
+export const OUTCOME_RETRY_STOPPING_MS = 30 * 1000
 /** The longest wait between two outcome post attempts. */
 export const OUTCOME_BACKOFF_MAX_MS = 30 * 1000
 
@@ -127,7 +129,7 @@ export class Loop {
     this.stopped = true
   }
 
-  /** Runs until `stop()`; resolves once the in-flight Job (if any) has reported its outcome. */
+  /** Runs until `stop()`; resolves once the in-flight Job (if any) has reported its outcome or the post was given up on. */
   async run(): Promise<void> {
     const { config, client, log } = this.deps
     this.state.running = true
@@ -320,7 +322,8 @@ export class Loop {
         continue
       }
       const now = this.now()
-      if (now >= leaseUntil() || now - started >= OUTCOME_RETRY_MS) {
+      const budget = this.stopped ? OUTCOME_RETRY_STOPPING_MS : OUTCOME_RETRY_MS
+      if (now >= leaseUntil() || now - started >= budget) {
         return this.giveUp(job, "the lease ran out before the post got through")
       }
       await this.sleep(Math.min(config.pollIntervalMs * 2 ** (attempt - 1), OUTCOME_BACKOFF_MAX_MS))
