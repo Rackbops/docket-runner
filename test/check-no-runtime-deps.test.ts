@@ -1,5 +1,5 @@
 import { spawnSync } from "node:child_process"
-import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs"
+import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { fileURLToPath } from "node:url"
@@ -29,5 +29,34 @@ describe("scripts/check-no-runtime-deps.mjs", () => {
     const r = check(source)
     expect(r.status).toBe(1)
     expect(r.stderr).toContain("mod.js")
+  })
+})
+
+describe("the Dockerfile smoke grep", () => {
+  const dockerfile = readFileSync(fileURLToPath(new URL("../Dockerfile", import.meta.url)), "utf8")
+  const grep = /! (grep -rqE ".*") dist/.exec(dockerfile)?.[1]
+
+  // Runs the Dockerfile's own grep over a fixture directory; exit 0 means it found an import.
+  const finds = (source: string): boolean => {
+    const dir = mkdtempSync(join(tmpdir(), "runner-docker-grep-"))
+    writeFileSync(join(dir, "mod.js"), source)
+    return spawnSync("sh", ["-c", `${grep} ${dir}`]).status === 0
+  }
+
+  it("is found in the Dockerfile", () => {
+    expect(grep).toBeDefined()
+  })
+
+  it.each([
+    'import { x } from "@rackbops/docket-core"',
+    'import "@rackbops/docket-core"',
+    'const m = await import("@rackbops/docket-core")',
+    'const m = require("@rackbops/docket-core")',
+  ])("finds %s", (source) => {
+    expect(finds(source)).toBe(true)
+  })
+
+  it("leaves clean output alone", () => {
+    expect(finds('import { join } from "node:path"')).toBe(false)
   })
 })
