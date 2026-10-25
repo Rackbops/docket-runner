@@ -8,5 +8,3 @@ coverage/
 deploy/.env
 deploy/app.env
 deploy/answers.env
-# web-search spike output (spike/run.mjs); results stay on the machine that ran them
-spike-results/

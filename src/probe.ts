@@ -46,12 +46,6 @@ export class AuthProbe {
     return this.inFlight
   }
 
-  /** Test-only: forget the cached verdict. */
-  reset(): void {
-    this.cache = null
-    this.inFlight = null
-  }
-
   private async probe(): Promise<AuthState> {
     const checkedAt = new Date(this.now()).toISOString()
     try {

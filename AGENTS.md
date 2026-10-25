@@ -1,9 +1,9 @@
 # docket-runner -- Agent Instructions
 
 The `claude -p` Job runner for the docket task tracker: it holds roshne's Claude subscription
-credential, claims Jobs from Lepid-Labs/city-hall, runs the CLI as the Job says, and posts the
+credential, claims Jobs from Rackbops/city-hall, runs the CLI as the Job says, and posts the
 result back. Plan of record: Rackbops/Tooling `research/city-hall-task-tracker.md`, section 5.12;
-epic Lepid-Labs/city-hall#4 (E8); this repo's scaffold is #1.
+epic Lepid-Labs/city-hall#4 (E8, upstream); this repo's scaffold is #1.
 
 My personal global instructions govern *how I work* -- the review gate, escalation, git and
 shipping, tool routing, shell choice. Claude Code loads them from `~/.claude/CLAUDE.md`; Codex
@@ -47,11 +47,12 @@ an `ANTHROPIC_*` variable, an SDK dependency, or a `--bare` flag (it never reads
 
 ## Ground truth
 
-The code is the source; the plan is the design. `src/contract.ts` is the v0 of the Job and
-JobResult shapes and moves to `@rackbops/docket-core` once that package publishes the Executor
-port types -- when it does, import the types and delete the local copy. The CLI facts the
-classifier relies on (`is_error`, `api_error_status`, `subtype: error_max_turns`, the limit
-messages) came from code.claude.com/docs and research-triage's production evidence; a CLI bump
+The code is the source; the plan is the design. `src/contract.ts` imports the shapes
+(`JobSpec`, `JobResult`, `JobFailure`, `FailureKind`, `JobSuccess`) from `@rackbops/docket-core` as
+types only and re-exports them; what it holds itself is the runner's `Lease`, `Job`, `ContractError`
+and `parseJob`, plus value mirrors of the default tool lists that `test/contract.test.ts` pins to
+the core's. The CLI facts the classifier relies on (`is_error`, `api_error_status`,
+`subtype: error_max_turns`, the limit messages) came from code.claude.com/docs and research-triage's production evidence; a CLI bump
 that changes them shows up as a classification test failure, not a silent misfile.
 
 ## Testing & checks
