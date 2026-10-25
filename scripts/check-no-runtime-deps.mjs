@@ -5,7 +5,8 @@ import { readdirSync, readFileSync, statSync } from "node:fs"
 import { join } from "node:path"
 
 // Any way of loading a module by that name: `from "..."`, a bare `import "..."`, a dynamic
-// `import("...")`, or `require("...")`. The Dockerfile's smoke check greps the same shapes.
+// `import("...")`, or `require("...")`. The Dockerfile's smoke check greps the single-line forms of these (grep is line-based);
+// this script also catches a specifier on the line after the keyword.
 const RUNTIME_IMPORT = /\b(?:from|import|require)\s*\(?\s*["']@rackbops\//
 
 const offenders = []
