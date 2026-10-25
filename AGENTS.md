@@ -42,7 +42,8 @@ an `ANTHROPIC_*` variable, an SDK dependency, or a `--bare` flag (it never reads
   before it) with its runner token: in production over the shared Docker network `docket` on the
   queue's own host (`http://city-hall:8510`), elsewhere through the edge with a Cloudflare Access
   service token. Nothing listens except the health endpoint, published on host loopback.
-- **It never retries a Job.** A failure is classified and posted; the queue decides. A lost
+- **It never retries a Job.** A failure is classified and posted (retried with backoff while the
+  lease holds; a post never delivered counts as abandoned); the queue decides. A lost
   lease means the outcome is not posted at all and the CLI is stopped.
 
 ## Ground truth

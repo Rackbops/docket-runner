@@ -1,6 +1,6 @@
 import { createServer, type Server } from "node:http"
 
-import type { LoopState } from "./loop.js"
+import { CLAIM_FAILURES_UNREADY, type LoopState } from "./loop.js"
 import type { AuthProbe } from "./probe.js"
 
 export interface HealthDeps {
@@ -11,8 +11,8 @@ export interface HealthDeps {
 }
 
 /**
- * `/healthz`: the process is up. `/readyz`: the credential works (real-call probe, cached) and the
- * loop is running -- 503 otherwise, with the reason in the body. Never touches a secret.
+ * `/healthz`: the process is up. `/readyz`: the credential works (real-call probe, cached), the
+ * loop is running and claims are not failing in a row (`CLAIM_FAILURES_UNREADY`) -- 503 otherwise, with the reason in the body. Never touches a secret.
  */
 export function startHealthServer(port: number, bind: string, deps: HealthDeps): Promise<Server> {
   const server = createServer(async (req, res) => {
@@ -29,7 +29,10 @@ export function startHealthServer(port: number, bind: string, deps: HealthDeps):
     }
     if (url === "/readyz") {
       const auth = await deps.probe.check()
-      const ok = auth.ok && deps.state.running
+      const ok =
+        auth.ok &&
+        deps.state.running &&
+        deps.state.consecutiveClaimFailures < CLAIM_FAILURES_UNREADY
       const body = JSON.stringify({
         ok,
         version: deps.version,

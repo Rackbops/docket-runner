@@ -5,7 +5,7 @@ import { join } from "node:path"
 import { afterEach, describe, expect, it } from "vitest"
 
 import { makeCityHallClient } from "../src/cityhall.js"
-import { Loop, parseReset } from "../src/loop.js"
+import { CLAIM_FAILURES_UNREADY, Loop, parseReset } from "../src/loop.js"
 import { job, testConfig } from "./helpers.js"
 
 interface Recorded {
@@ -15,8 +15,18 @@ interface Recorded {
 }
 
 /** A fake city-hall: hands out the queued Jobs once each, records heartbeats and outcomes. */
-function fakeCityHall(queue: unknown[], opts: { loseLease?: () => boolean } = {}) {
+function fakeCityHall(
+  queue: unknown[],
+  opts: {
+    loseLease?: () => boolean
+    /** A status to answer this claim with instead of handing out a Job (undefined: the normal path). */
+    claimStatus?: (n: number) => number | undefined
+    /** A status to answer this outcome post with instead of recording it (undefined: record it). */
+    outcomeStatus?: (n: number) => number | undefined
+  } = {},
+) {
   const rec: Recorded = { claims: 0, heartbeats: [], outcomes: [] }
+  let outcomeCalls = 0
   const server = createServer((req, res) => {
     let body = ""
     req.on("data", (c: Buffer) => {
@@ -30,6 +40,11 @@ function fakeCityHall(queue: unknown[], opts: { loseLease?: () => boolean } = {}
       const url = req.url ?? ""
       if (url === "/api/execute/claim") {
         rec.claims += 1
+        const forced = opts.claimStatus?.(rec.claims)
+        if (forced !== undefined) {
+          res.writeHead(forced).end()
+          return
+        }
         const next = queue.shift()
         if (!next) {
           res.writeHead(204).end()
@@ -48,6 +63,12 @@ function fakeCityHall(queue: unknown[], opts: { loseLease?: () => boolean } = {}
       if (m[2] === "heartbeat") {
         rec.heartbeats.push(decodeURIComponent(m[1] ?? ""))
         res.writeHead(opts.loseLease?.() ? 409 : 204).end()
+        return
+      }
+      outcomeCalls += 1
+      const refused = opts.outcomeStatus?.(outcomeCalls)
+      if (refused !== undefined) {
+        res.writeHead(refused).end()
         return
       }
       rec.outcomes.push({ id: decodeURIComponent(m[1] ?? ""), body: JSON.parse(body) })
@@ -171,6 +192,7 @@ describe("the claim loop against a fake city-hall", () => {
       result: { kind: "auth_failed", apiErrorStatus: 401 },
     })
     expect(loop.state.pauseReason).toBe("auth")
+    expect(loop.state.jobsFailed).toBe(1)
     expect(loop.state.pausedUntil).not.toBeNull()
     expect(rec.claims).toBe(1)
     expect(probes).toBe(0)
@@ -198,6 +220,209 @@ describe("the claim loop against a fake city-hall", () => {
     const loop = new Loop({ config, client: makeCityHallClient(config), log, now: () => now })
     await runLoopUntil(loop, () => rec.outcomes.length === 1, 2000)
     expect(loop.state.pausedUntil).toBe(new Date(2026, 9, 25, 15, 0, 0).toISOString())
+  })
+  it("keeps heartbeating and retrying the outcome past the old three attempts", async () => {
+    // Six refusals: the old loop gave up after three and dropped the finished Job.
+    const { server, rec } = fakeCityHall([job()], {
+      outcomeStatus: (n) => (n <= 6 ? 503 : undefined),
+    })
+    servers.push(server)
+    const config = testConfig({ cityHallUrl: await listen(server) })
+    const loop = new Loop({ config, client: makeCityHallClient(config), log })
+    await runLoopUntil(loop, () => rec.outcomes.length === 1)
+    expect(rec.outcomes).toHaveLength(1)
+    expect(rec.outcomes[0]?.body).toMatchObject({ result: { kind: "success" } })
+    expect(loop.state.jobsDone).toBe(1)
+    expect(loop.state.jobsAbandoned).toBe(0)
+  })
+
+  it("gives up once the lease has run out, logs it at error level and does not count the Job", async () => {
+    const { server, rec } = fakeCityHall([job()], { outcomeStatus: () => 503 })
+    servers.push(server)
+    const config = testConfig({ cityHallUrl: await listen(server) })
+    // A fake clock that jumps past the lease between attempts.
+    let t = Date.now()
+    const loop = new Loop({
+      config,
+      client: makeCityHallClient(config),
+      log,
+      now: () => t,
+      sleep: async () => {
+        t += 120_000
+        await new Promise((r) => setTimeout(r, 1))
+      },
+    })
+    logs.length = 0
+    await runLoopUntil(loop, () => logs.some((l) => l.startsWith("error outcome not delivered")))
+    expect(logs.some((l) => l.startsWith("error outcome not delivered"))).toBe(true)
+    expect(rec.outcomes).toHaveLength(0)
+    expect(loop.state.jobsDone).toBe(0)
+    expect(loop.state.jobsAbandoned).toBe(1)
+  })
+
+  it("backs off exponentially between outcome attempts and retries a 429", async () => {
+    const { server, rec } = fakeCityHall([job()], {
+      outcomeStatus: (n) => (n === 1 ? 429 : n <= 4 ? 503 : undefined),
+    })
+    servers.push(server)
+    const config = testConfig({ cityHallUrl: await listen(server) })
+    const sleeps: number[] = []
+    const loop = new Loop({
+      config,
+      client: makeCityHallClient(config),
+      log,
+      sleep: async (ms) => {
+        sleeps.push(ms)
+        await new Promise((r) => setTimeout(r, 1))
+      },
+    })
+    await runLoopUntil(loop, () => rec.outcomes.length === 1)
+    expect(sleeps.slice(0, 4)).toEqual([20, 40, 80, 160])
+    expect(rec.outcomes[0]?.body).toMatchObject({ result: { kind: "success" } })
+  })
+
+  it("gives up after a second permanent refusal instead of looping", async () => {
+    const { server, rec } = fakeCityHall([job()], { outcomeStatus: () => 400 })
+    servers.push(server)
+    const config = testConfig({ cityHallUrl: await listen(server) })
+    const loop = new Loop({ config, client: makeCityHallClient(config), log })
+    logs.length = 0
+    await runLoopUntil(loop, () => logs.some((l) => l.startsWith("error outcome not delivered")))
+    expect(rec.outcomes).toHaveLength(0)
+    expect(loop.state.jobsAbandoned).toBe(1)
+    expect(loop.state.jobsFailed).toBe(0)
+  })
+
+  it("answers a 413 on the outcome with a short error outcome", async () => {
+    const { server, rec } = fakeCityHall([job()], {
+      outcomeStatus: (n) => (n === 1 ? 413 : undefined),
+    })
+    servers.push(server)
+    const config = testConfig({ cityHallUrl: await listen(server) })
+    const loop = new Loop({ config, client: makeCityHallClient(config), log })
+    await runLoopUntil(loop, () => rec.outcomes.length === 1)
+    expect(rec.outcomes).toHaveLength(1)
+    const posted = rec.outcomes[0]?.body as { result: { kind: string; detail: string } }
+    expect(posted.result.kind).toBe("error")
+    expect(posted.result.detail).toContain("413")
+    // City-hall recorded an error, so the Job is failed, not done.
+    expect(loop.state.jobsFailed).toBe(1)
+    expect(loop.state.jobsDone).toBe(0)
+  })
+
+  it("answers a claimed Job that fails validation with an error outcome naming the field", async () => {
+    const { server, rec } = fakeCityHall([job({ maxTurns: "8" })])
+    servers.push(server)
+    const config = testConfig({ cityHallUrl: await listen(server) })
+    const loop = new Loop({ config, client: makeCityHallClient(config), log })
+    await runLoopUntil(loop, () => rec.outcomes.length >= 1)
+    expect(rec.outcomes[0]?.id).toBe("occ-1")
+    const posted = rec.outcomes[0]?.body as {
+      leaseToken: string
+      result: { kind: string; detail: string }
+    }
+    expect(posted.leaseToken).toBe("lease-1")
+    expect(posted.result.kind).toBe("error")
+    expect(posted.result.detail).toContain("job.maxTurns")
+    // The queue answered, so a Job it sent that does not validate is not a failing claim.
+    expect(loop.state.consecutiveClaimFailures).toBe(0)
+  })
+
+  it("goes unready after consecutive claim failures and recovers on one success", async () => {
+    let failing = true
+    const { server } = fakeCityHall([], { claimStatus: () => (failing ? 401 : undefined) })
+    servers.push(server)
+    const config = testConfig({ cityHallUrl: await listen(server) })
+    const loop = new Loop({
+      config,
+      client: makeCityHallClient(config),
+      log,
+      sleep: () => new Promise((r) => setTimeout(r, 1)),
+    })
+    const running = loop.run()
+    const until = async (done: () => boolean) => {
+      const start = Date.now()
+      while (!done() && Date.now() - start < 4000) await new Promise((r) => setTimeout(r, 5))
+    }
+    await until(() => loop.state.consecutiveClaimFailures >= CLAIM_FAILURES_UNREADY)
+    expect(loop.state.consecutiveClaimFailures).toBeGreaterThanOrEqual(CLAIM_FAILURES_UNREADY)
+    expect(loop.state.lastClaimError).toContain("HTTP 401")
+    failing = false
+    await until(() => loop.state.consecutiveClaimFailures === 0)
+    loop.stop()
+    await running
+    expect(loop.state.consecutiveClaimFailures).toBe(0)
+  })
+
+  it("sleeps four poll intervals after a failed claim", async () => {
+    const { server } = fakeCityHall([], { claimStatus: () => 500 })
+    servers.push(server)
+    const config = testConfig({ cityHallUrl: await listen(server), pollIntervalMs: 100 })
+    const sleeps: number[] = []
+    const loop = new Loop({
+      config,
+      client: makeCityHallClient(config),
+      log,
+      sleep: async (ms) => {
+        sleeps.push(ms)
+        await new Promise((r) => setTimeout(r, 1))
+      },
+    })
+    await runLoopUntil(loop, () => sleeps.length >= 2)
+    expect(sleeps.every((ms) => ms === 400)).toBe(true)
+  })
+
+  it("claims again after an auth pause once the probe passes", async () => {
+    process.env.FAKE_CLAUDE_MODE = "auth401"
+    const { server, rec } = fakeCityHall([job(), job({ id: "occ-2" })])
+    servers.push(server)
+    const config = testConfig({ cityHallUrl: await listen(server) })
+    let t = Date.now()
+    let probes = 0
+    const loop = new Loop({
+      config,
+      client: makeCityHallClient(config),
+      log,
+      now: () => t,
+      sleep: async () => {
+        t += 60_000
+        await new Promise((r) => setTimeout(r, 1))
+      },
+      authOk: async () => {
+        probes += 1
+        return true
+      },
+    })
+    await runLoopUntil(loop, () => rec.outcomes.length === 2)
+    expect(probes).toBeGreaterThanOrEqual(1)
+    expect(rec.outcomes).toHaveLength(2)
+  })
+
+  it("stays paused while the probe keeps failing", async () => {
+    process.env.FAKE_CLAUDE_MODE = "auth401"
+    const { server, rec } = fakeCityHall([job(), job({ id: "occ-2" })])
+    servers.push(server)
+    const config = testConfig({ cityHallUrl: await listen(server) })
+    let t = Date.now()
+    let probes = 0
+    const loop = new Loop({
+      config,
+      client: makeCityHallClient(config),
+      log,
+      now: () => t,
+      sleep: async () => {
+        t += 60_000
+        await new Promise((r) => setTimeout(r, 1))
+      },
+      authOk: async () => {
+        probes += 1
+        return false
+      },
+    })
+    await runLoopUntil(loop, () => probes >= 2, 3000)
+    expect(probes).toBeGreaterThanOrEqual(2)
+    expect(rec.claims).toBe(1)
+    expect(loop.state.pauseReason).toBe("auth")
   })
 })
 
