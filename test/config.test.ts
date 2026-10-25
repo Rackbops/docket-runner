@@ -46,6 +46,21 @@ describe("loadConfig", () => {
     expect(c.cfAccessClientId).toBeUndefined()
   })
 
+  it("sets ceilings above the defaults and refuses ones below them or beyond a timer", () => {
+    const c = loadConfig(good)
+    expect([c.maxTimeoutMs, c.maxMaxTurns, c.maxMaxBudgetUsd]).toEqual([1_800_000, 50, 5])
+    expect(() => loadConfig({ ...good, MAX_MAX_TURNS: "4" })).toThrow(
+      /MAX_MAX_TURNS must be at least/,
+    )
+    expect(() => loadConfig({ ...good, MAX_MAX_BUDGET_USD: "0.1" })).toThrow(/MAX_MAX_BUDGET_USD/)
+    expect(() => loadConfig({ ...good, MAX_TIMEOUT_MS: "1000" })).toThrow(
+      /MAX_TIMEOUT_MS must be at least/,
+    )
+    expect(() => loadConfig({ ...good, MAX_TIMEOUT_MS: "3000000000" })).toThrow(
+      /at most 2147483647/,
+    )
+  })
+
   it("wants the Access service token as a pair", () => {
     expect(() => loadConfig({ ...good, CF_ACCESS_CLIENT_ID: "id" })).toThrow(/must be set together/)
     const c = loadConfig({ ...good, CF_ACCESS_CLIENT_ID: "id", CF_ACCESS_CLIENT_SECRET: "s" })

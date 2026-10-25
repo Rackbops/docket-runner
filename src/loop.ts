@@ -35,6 +35,8 @@ export interface LoopDeps {
   execute?: Executor
   sleep?: (ms: number) => Promise<void>
   now?: () => number
+  /** The shortest heartbeat interval honoured, in seconds. Default `HEARTBEAT_MIN_S`; tests lower it. */
+  heartbeatMinSeconds?: number
   /** Called after an auth failure before claiming again; returns true when the credential works. */
   authOk?: () => Promise<boolean>
 }
@@ -60,6 +62,12 @@ const MAX_RESET_AHEAD_MS = 14 * 24 * 3_600_000
 const CLOCK_RE = /^(\d{1,2})(?::(\d{2}))?\s*(am|pm)$/i
 const UNIT_MS: Record<string, number> = { h: 3_600_000, m: 60_000, s: 1_000 }
 const UNIT_RE = /(\d+(?:\.\d+)?)\s*(hours?|hrs?|h|minutes?|mins?|m|seconds?|secs?|s)\b/gi
+
+/** The heartbeat interval is city-hall's to name, but a bad value must not flood or starve it. */
+export const HEARTBEAT_MIN_S = 5
+export const HEARTBEAT_MAX_S = 300
+export const heartbeatMs = (seconds: number, minSeconds = HEARTBEAT_MIN_S): number =>
+  Math.min(Math.max(seconds, minSeconds), HEARTBEAT_MAX_S) * 1000
 
 /**
  * The instant a usage-limit message says claiming may resume, or null when it names none this
@@ -200,25 +208,28 @@ export class Loop {
     // Heartbeats keep going until the outcome is delivered or given up; one still in flight when
     // that happens must not touch state.
     let beating = true
-    const beat = setInterval(() => {
-      client
-        .heartbeat(job)
-        .then((r) => {
-          if (!beating) return
-          this.state.lastHeartbeatAt = new Date(this.now()).toISOString()
-          if (r === "ok") leaseUntil = this.now() + leaseMs
-          if (r === "lost" && !lease.signal.aborted) {
-            log("warn", "lease lost during run; stopping the CLI", { jobId: job.id })
-            lease.abort()
-          }
-        })
-        .catch((err) =>
-          log("warn", "heartbeat failed", {
-            jobId: job.id,
-            error: err instanceof Error ? err.message : String(err),
-          }),
-        )
-    }, job.lease.heartbeatSeconds * 1000)
+    const beat = setInterval(
+      () => {
+        client
+          .heartbeat(job)
+          .then((r) => {
+            if (!beating) return
+            this.state.lastHeartbeatAt = new Date(this.now()).toISOString()
+            if (r === "ok") leaseUntil = this.now() + leaseMs
+            if (r === "lost" && !lease.signal.aborted) {
+              log("warn", "lease lost during run; stopping the CLI", { jobId: job.id })
+              lease.abort()
+            }
+          })
+          .catch((err) =>
+            log("warn", "heartbeat failed", {
+              jobId: job.id,
+              error: err instanceof Error ? err.message : String(err),
+            }),
+          )
+      },
+      heartbeatMs(job.lease.heartbeatSeconds, this.deps.heartbeatMinSeconds),
+    )
 
     try {
       const result = await runJob(job, config, this.deps.execute, lease.signal, log)

@@ -12,6 +12,7 @@ import {
   excerpt,
   FIRECRAWL_DENIED,
   FIRECRAWL_MCP_CONFIG,
+  jobLimits,
   planTools,
   realExecutor,
   runJob,
@@ -628,5 +629,50 @@ describe("the CLI's own failure codes win over text patterns", () => {
     const stdout = JSON.stringify({ is_error: true, api_error_status: 401, result: "max turns" })
     const failed: Exec = { exitCode: 1, stdout, stderr: "", timedOut: false, durationMs: 1 }
     expect(classify(parseJob(job()), failed).kind).toBe("auth_failed")
+  })
+})
+
+describe("a Job's limits are clamped to the runner's ceilings (#36)", () => {
+  const capped = testConfig({ maxTimeoutMs: 5_000, maxMaxTurns: 20, maxMaxBudgetUsd: 1 })
+
+  it("runs a Job over each ceiling with the ceiling's value", () => {
+    const over = parseJob(job({ maxTurns: 10_000, maxBudgetUsd: 1000, timeoutMs: 86_400_000 }))
+    const args = buildArgs(over, capped)
+    expect(args[args.indexOf("--max-turns") + 1]).toBe("20")
+    expect(args[args.indexOf("--max-budget-usd") + 1]).toBe("1")
+    expect(jobLimits(over, capped).timeoutMs).toBe(5_000)
+  })
+
+  it("leaves a Job under the ceilings, and an unset one on the defaults, alone", () => {
+    const under = jobLimits(
+      parseJob(job({ maxTurns: 3, maxBudgetUsd: 0.2, timeoutMs: 1_000 })),
+      capped,
+    )
+    expect(under).toEqual({ maxTurns: 3, maxBudgetUsd: 0.2, timeoutMs: 1_000 })
+    expect(jobLimits(parseJob(job()), capped)).toEqual({
+      maxTurns: 8,
+      maxBudgetUsd: 0.5,
+      timeoutMs: 5_000,
+    })
+  })
+
+  it("hands the executor the clamped timeout, not the Job's", async () => {
+    let seen = 0
+    const executor = async (o: ExecOptions): Promise<Exec> => {
+      seen = o.timeoutMs
+      return { exitCode: 0, stdout: "{}", stderr: "", timedOut: false, durationMs: 1 }
+    }
+    await runJob(parseJob(job({ timeoutMs: 86_400_000 })), capped, executor)
+    expect(seen).toBe(5_000)
+  })
+
+  it("does not let timeoutMs: 3e9 kill the run at once", async () => {
+    const { result } = await run("success", { timeoutMs: 3e9 })
+    expect(result.kind).toBe("success")
+  })
+
+  it("refuses a fractional turn count or timeout at the wire", () => {
+    expect(() => parseJob(job({ maxTurns: 2.5 }))).toThrow(/maxTurns must be a whole number/)
+    expect(() => parseJob(job({ timeoutMs: 1.5 }))).toThrow(/timeoutMs must be a whole number/)
   })
 })

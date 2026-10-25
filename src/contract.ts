@@ -69,6 +69,14 @@ function optionalNumber(obj: Record<string, unknown>, key: string): number | und
   return v
 }
 
+function optionalInteger(obj: Record<string, unknown>, key: string): number | undefined {
+  const v = optionalNumber(obj, key)
+  if (v !== undefined && !Number.isInteger(v)) {
+    throw new ContractError(`job.${key} must be a whole number`)
+  }
+  return v
+}
+
 function optionalStringArray(obj: Record<string, unknown>, key: string): string[] | undefined {
   const v = obj[key]
   if (v === undefined || v === null) return undefined
@@ -119,13 +127,13 @@ export function parseJob(value: unknown): Job {
   if (allowed !== undefined) job.allowedTools = allowed
   const disallowed = optionalStringArray(value, "disallowedTools")
   if (disallowed !== undefined) job.disallowedTools = disallowed
-  const maxTurns = optionalNumber(value, "maxTurns")
+  const maxTurns = optionalInteger(value, "maxTurns")
   if (maxTurns !== undefined) job.maxTurns = maxTurns
   const maxBudgetUsd = optionalNumber(value, "maxBudgetUsd")
   if (maxBudgetUsd !== undefined) job.maxBudgetUsd = maxBudgetUsd
   const resume = optionalString(value, "resumeSessionId")
   if (resume !== undefined) job.resumeSessionId = resume
-  const timeoutMs = optionalNumber(value, "timeoutMs")
+  const timeoutMs = optionalInteger(value, "timeoutMs")
   if (timeoutMs !== undefined) job.timeoutMs = timeoutMs
   return job
 }
