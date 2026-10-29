@@ -171,7 +171,7 @@ the end and spent subscription usage on a result city-hall would refuse.
 the CLI would split in two (a comma or space outside a rule), and `runJob` posts that as an `error`
 without starting the CLI. `--tools` carries the effective list, so tools outside it do not exist in
 the run at all; `--strict-mcp-config` with no `--mcp-config` loads no MCP server. All three flags
-exist in the pinned CLI (2.1.304). Widening the ceiling is a reviewed change to that constant.
+exist in the pinned CLI (2.1.312). Widening the ceiling is a reviewed change to that constant.
 The default tool lists (`DEFAULT_ALLOWED_TOOLS`, `DEFAULT_DISALLOWED_TOOLS` in `src/contract.ts`)
 are a separate thing, mirrors of docket-core's that `test/contract.test.ts` pins; the Firecrawl
 names are in the ceiling, not in those defaults.
@@ -198,7 +198,7 @@ or bare `mcp__firecrawl`: a deny beats an allow and would take search and scrape
 carries the built-in names only. Proven on CLI 2.1.302 against a local fake MCP server
 (2026-10-18): `${FIRECRAWL_API_KEY}` in an inline `--mcp-config` reached the server as the
 bearer; the init event listed `firecrawl_crawl` under `--tools WebSearch` and not once denied; an
-unallowed MCP tool came back in `permission_denials`. Not proven on the pinned 2.1.304 or
+unallowed MCP tool came back in `permission_denials`. Not proven on the pinned 2.1.312 or
 against Firecrawl itself.
 
 With no key, `planTools` drops the Firecrawl entries (the run goes on with the rest, possibly no
