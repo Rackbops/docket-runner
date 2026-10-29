@@ -23,5 +23,15 @@
       "quoteStyle": "double",
       "semicolons": "asNeeded"
     }
+  },
+  "markdown": {
+    "formatter": {
+      "enabled": false
+    }
+  },
+  "yaml": {
+    "formatter": {
+      "enabled": false
+    }
   }
 }
