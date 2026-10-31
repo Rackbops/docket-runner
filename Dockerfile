@@ -12,7 +12,7 @@
 # buildSubprocessEnv strips them from every CLI call regardless.
 
 FROM node:26-bookworm-slim AS build
-RUN npm install -g pnpm@12.14.0
+RUN npm install -g pnpm@12.16.1
 WORKDIR /app
 # pnpm-workspace.yaml is pnpm's settings file, not a workspace: it carries the minimum-release-age
 # exemption for @rackbops/docket-core, and pnpm enforces that policy against the lockfile even
@@ -31,7 +31,7 @@ RUN apt-get update \
   && rm -rf /var/lib/apt/lists/*
 # The Claude CLI, pinned so a rebuild is reproducible and a CLI bump is a Renovate PR
 # (renovate.json's custom manager reads this line).
-RUN npm install -g @anthropic-ai/claude-code@2.1.304 && npm cache clean --force
+RUN npm install -g @anthropic-ai/claude-code@2.1.312 && npm cache clean --force
 WORKDIR /app
 COPY package.json ./
 COPY --from=build /app/dist ./dist
