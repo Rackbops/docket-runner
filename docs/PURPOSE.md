@@ -8,7 +8,11 @@ work to Rackbops/city-hall, which queues it and leases it to a runner. (A plain-
 dialogue is deferred, plan item 31, and would run outside city-hall if it is taken up.) roshne's rule is that every
 model call runs on roshne's Claude subscription through the Claude Code CLI in print mode, never
 an API key, and that the subscription token never sits on a host roshne does not administer.
-city-hall runs on the Lepid-Labs edge, so the token cannot live there.
+The token therefore lives in the runner's stack, not in city-hall's. In production city-hall and the
+runner run on one host roshne administers and share a Docker network; the runner calls it as
+`http://city-hall:8510`. A client on another host reaches the queue through its own Cloudflare
+Tunnel and Access, and a runner on a host without the queue does the same (see `deploy/README.md`,
+"Where it runs").
 
 ## What docket-runner is
 
