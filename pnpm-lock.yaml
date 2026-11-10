@@ -170,8 +170,8 @@ importers:
         specifier: ^2.5.15
         version: 2.6.6
       '@rackbops/docket-core':
-        specifier: ^0.7.0
-        version: 0.7.0
+        specifier: ^0.21.0
+        version: 0.21.0
       '@types/node':
         specifier: ^26.6.5
         version: 26.6.6
@@ -266,8 +266,8 @@ packages:
   '@oxc-project/types@0.151.0':
     resolution: {integrity: sha512-J1yXrIlNDZVzE3ada310xeAw7nH8yCAyLPuUIsjKatFPmfn5bS1oW+cM+QsGOtVWd5nhSpbwZWx/rue+r5Z+PA==}
 
-  '@rackbops/docket-core@0.7.0':
-    resolution: {integrity: sha512-KhB4rQYiWUAZYIPwhEeAJa2aVEbXHjW7XaD//ifAPm2cpliNbheJfNJeg5RuiVOu+zbGiQmYQBAve/NV+GepxA==}
+  '@rackbops/docket-core@0.21.0':
+    resolution: {integrity: sha512-Qa7IKT3Ay/BoEZNG5YN0U70niHadydzqugHuAg9hXDHfhnyYt6wAxBXjW/Zd9OaaZ8DgFHDsTToO/4/Lk9X52A==}
     engines: {node: '>=24'}
 
   '@rolldown/binding-android-arm-eabi@1.2.11':
@@ -825,7 +825,7 @@ snapshots:
 
   '@oxc-project/types@0.151.0': {}
 
-  '@rackbops/docket-core@0.7.0': {}
+  '@rackbops/docket-core@0.21.0': {}
 
   '@rolldown/binding-android-arm-eabi@1.2.11':
     optional: true
