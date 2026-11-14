@@ -342,6 +342,8 @@ interface Envelope {
   session_id?: string
   total_cost_usd?: number
   usage?: unknown
+  /** Per model, nested requests included: where a WebSearch tool call's searches are counted. */
+  modelUsage?: unknown
   num_turns?: number
   is_error?: boolean
   subtype?: string
@@ -456,6 +458,9 @@ export function classify(
   if (env.session_id) ok.sessionId = env.session_id
   if (typeof env.total_cost_usd === "number") ok.totalCostUsd = env.total_cost_usd
   if (env.usage !== undefined) ok.usage = env.usage
+  // The shop check stands only on a search its run made (docket#128), and Claude Code counts a
+  // WebSearch tool call's searches here, not in `usage`, which covers the top-level loop only.
+  if (env.modelUsage !== undefined) ok.modelUsage = env.modelUsage
   if (typeof env.num_turns === "number") ok.numTurns = env.num_turns
   return ok
 }
