@@ -392,6 +392,16 @@ describe("runJob against the fake CLI", () => {
     if (result.kind === "success") expect(result.structuredOutput).toEqual({ answer: 42 })
   })
 
+  it("passes the CLI's modelUsage on, where a WebSearch call's searches are counted (docket#128)", async () => {
+    const { result } = await run("schema", { jsonSchema: { type: "object" } })
+    expect(result.kind).toBe("success")
+    if (result.kind !== "success") return
+    expect(result.modelUsage).toEqual({
+      "claude-haiku-fake": { inputTokens: 4, webSearchRequests: 1 },
+    })
+    expect(result.usage).toEqual({ input_tokens: 10, output_tokens: 5 })
+  })
+
   it("passes the fake's research answer through as structured output (the e2e's happy path)", async () => {
     const { result } = await run("research", { jsonSchema: { type: "object" } })
     expect(result.kind).toBe("success")

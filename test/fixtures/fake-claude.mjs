@@ -77,6 +77,7 @@ switch (mode) {
       session_id: "s-schema",
       total_cost_usd: 0.02,
       usage: { input_tokens: 10, output_tokens: 5 },
+      modelUsage: { "claude-haiku-fake": { inputTokens: 4, webSearchRequests: 1 } },
       num_turns: 1,
     })
     break
